@@ -31,6 +31,11 @@ COLS_NOVEDAD = [
     "NOMBRE_INSTITUCIÓN", "SECTOR", "MODALIDAD", "DEPARTAMENTO_OFERTA_PROGRAMA",
     "DIVISIÓN UNINORTE", "NÚMERO_PERIODOS_DE_DURACIÓN",
 ]
+COLS_SNAPSHOT = [
+    "CÓDIGO_SNIES_DEL_PROGRAMA", "NOMBRE_DEL_PROGRAMA", "NOMBRE_INSTITUCIÓN",
+    "SECTOR", "MODALIDAD", "DEPARTAMENTO_OFERTA_PROGRAMA",
+    "NÚMERO_PERIODOS_DE_DURACIÓN", "PERIODICIDAD",
+]
 COLS_MOD = COLS_NOVEDAD + ["QUE_CAMBIO"]
 
 COLS_DETAIL = [
@@ -415,6 +420,7 @@ def main():
         "por_modalidad":  _distribucion(snapshot_df, "MODALIDAD"),
         "por_periodos_stacked": por_periodos_stacked,
         "por_depto_mapa": _datos_mapa(snapshot_df),
+        "snapshot":       _to_records(snapshot_df, COLS_SNAPSHOT),
         "nuevos":        _to_records(nuevos_df,    COLS_NOVEDAD),
         "inactivos":     _to_records(inactivos_df, COLS_NOVEDAD),
         "modificados":   _to_records(mods_df,      COLS_MOD),
@@ -612,6 +618,16 @@ tr:hover td{background:#f8fafc}
       ✕ Limpiar filtro</button>
   </div>
 
+  <section id="snap-section" style="display:none">
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">
+        <div class="card-title" style="margin-bottom:0">Programas activos — <span id="snap-title"></span></div>
+      </div>
+      <input class="search" id="snap-search" placeholder="Buscar por nombre, institución, código SNIES…" oninput="filterSnap(this.value)" style="max-width:100%">
+      <div class="tbl-wrap" id="snap-tbl"></div>
+    </div>
+  </section>
+
   <section>
     <div class="tab-nav">
       <button class="tab-btn on" onclick="tab('nue',this)">
@@ -763,14 +779,37 @@ document.getElementById('k-mod-sub').textContent = 'acumulado: ' + fmt(D.kpis.mo
 })();
 
 let periodosFiltro = null;
+const _snapAll = D.snapshot || [];
 
-function applyPeriodosFiltro(arr) {
-  if (periodosFiltro === null) return arr;
-  return arr.filter(r => {
+const _SNAP_COLS = ['CÓDIGO_SNIES_DEL_PROGRAMA','NOMBRE_DEL_PROGRAMA','NOMBRE_INSTITUCIÓN',
+                    'SECTOR','MODALIDAD','DEPARTAMENTO_OFERTA_PROGRAMA','PERIODICIDAD'];
+const _SNAP_HEAD = {
+  'CÓDIGO_SNIES_DEL_PROGRAMA':'Cód. SNIES', 'NOMBRE_DEL_PROGRAMA':'Programa',
+  'NOMBRE_INSTITUCIÓN':'Institución', 'SECTOR':'Sector', 'MODALIDAD':'Modalidad',
+  'DEPARTAMENTO_OFERTA_PROGRAMA':'Departamento', 'PERIODICIDAD':'Periodicidad'
+};
+
+function _buildSnapTbl(data) {
+  const cols = _SNAP_COLS.filter(c => !data.length || c in data[0]);
+  let h = '<table><thead><tr>';
+  cols.forEach(c => { h += '<th>' + (_SNAP_HEAD[c]||c) + '</th>'; });
+  h += '</tr></thead><tbody>';
+  if (!data.length) {
+    h += '<tr><td colspan="'+cols.length+'" class="empty">Sin registros</td></tr>';
+  } else {
+    data.forEach(r => { h += '<tr>' + cols.map(c => '<td>'+(r[c]||'')+'</td>').join('') + '</tr>'; });
+  }
+  return h + '</tbody></table>';
+}
+
+function filterSnap(q) {
+  q = q.toLowerCase();
+  const base = _snapAll.filter(r => {
     const v = r['NÚMERO_PERIODOS_DE_DURACIÓN'];
-    if (!v && v !== 0) return false;
-    return Math.round(parseFloat(String(v))) === periodosFiltro;
+    return v !== undefined && v !== '' && Math.round(parseFloat(String(v))) === periodosFiltro;
   });
+  const res = q ? base.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q))) : base;
+  document.getElementById('snap-tbl').innerHTML = _buildSnapTbl(res);
 }
 
 function _updateChipStyles() {
@@ -786,20 +825,26 @@ function _updateChipStyles() {
 function setPeriodosFilter(val) {
   if (periodosFiltro === val) { clearPeriodosFilter(); return; }
   periodosFiltro = val;
-  const totales = ['nue','ina','mod'].reduce((s,t) => s + applyPeriodosFiltro(rows[t]).length, 0);
+  const matching = _snapAll.filter(r => {
+    const v = r['NÚMERO_PERIODOS_DE_DURACIÓN'];
+    return v !== undefined && v !== '' && Math.round(parseFloat(String(v))) === val;
+  });
+  const label = val + ' periodos — ' + matching.length.toLocaleString('es-CO') + ' programas activos';
   document.getElementById('periodos-chip').style.display = 'flex';
-  document.getElementById('periodos-chip-val').textContent =
-    val + ' periodos — ' + totales.toLocaleString('es-CO') + ' registros en novedades';
+  document.getElementById('periodos-chip-val').textContent = label;
+  document.getElementById('snap-title').textContent = label;
+  const si = document.getElementById('snap-search'); if (si) si.value = '';
+  document.getElementById('snap-tbl').innerHTML = _buildSnapTbl(matching);
+  document.getElementById('snap-section').style.display = 'block';
   _updateChipStyles();
-  ['nue','ina','mod'].forEach(t => render(t, applyPeriodosFiltro(rows[t])));
-  document.getElementById('tp-nue').closest('section').scrollIntoView({behavior:'smooth'});
+  document.getElementById('snap-section').scrollIntoView({behavior:'smooth'});
 }
 
 function clearPeriodosFilter() {
   periodosFiltro = null;
   document.getElementById('periodos-chip').style.display = 'none';
+  document.getElementById('snap-section').style.display = 'none';
   _updateChipStyles();
-  ['nue','ina','mod'].forEach(t => render(t, rows[t]));
 }
 
 const COLS = {
@@ -855,9 +900,8 @@ function tab(id, btn) {
 
 function filter(type, q) {
   q = q.toLowerCase();
-  let filtered = applyPeriodosFiltro(rows[type]);
-  if (q) filtered = filtered.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)));
-  render(type, filtered);
+  const res = q ? rows[type].filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q))) : rows[type];
+  render(type, res);
 }
 
 function sortTbl(type, col) {
