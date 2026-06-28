@@ -13,6 +13,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -71,6 +72,12 @@ HDR_GRAD = {
     "nuevos":      "linear-gradient(135deg,#15284b,#fcc10e)",
     "inactivos":   "linear-gradient(135deg,#7a1518,#ae1e22)",
     "modificados": "linear-gradient(135deg,#15284b,#bd900b)",
+}
+
+EXTRA_LINK = {
+    "nuevos": "",
+    "inactivos": "",
+    "modificados": '<a href="modificados_creditos.html" class="back-btn">📐 Análisis de Créditos →</a>',
 }
 
 XFILTER = {
@@ -207,17 +214,67 @@ def _count_last_run(df):
 
 
 def _fill_num(df, base, sources):
-    """Fill base column from first available source column."""
-    for src in sources:
+    """Rebuild `base` by overlaying `sources` in priority order (sources[0]
+    wins over sources[1], etc). The pre-existing `base` column, if any, is
+    used only as the LAST-resort fallback: for rows accumulated across
+    schema eras it can hold a stale/unrelated value (e.g. leftover from a
+    column that misaligned during pd.concat) while the suffixed snapshot
+    columns are the ones that actually describe the detected change."""
+    chain = list(sources) + ([base] if base in df.columns else [])
+    result = pd.Series(np.nan, index=df.index)
+    for src in reversed(chain):
         if src not in df.columns:
             continue
-        if base not in df.columns:
-            df[base] = df[src]
-            return
-        mask = df[base].isna()
-        if mask.any():
-            df.loc[mask, base] = df.loc[mask, src]
-        return
+        col = pd.to_numeric(df[src], errors="coerce")
+        result = result.where(col.isna(), col)
+    df[base] = result
+
+
+def _fill_text(df, base, sources):
+    """Same priority-overlay semantics as _fill_num, for text columns
+    ('' and 'nan' count as missing too)."""
+    chain = list(sources) + ([base] if base in df.columns else [])
+    result = pd.Series([np.nan] * len(df), index=df.index, dtype="object")
+    for src in reversed(chain):
+        if src not in df.columns:
+            continue
+        col = df[src]
+        missing = col.isna() | col.astype(str).str.strip().isin(["", "nan"])
+        result = result.where(missing, col)
+    df[base] = result
+
+
+_FECHA_RE_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _normalizar_fecha_obtencion(df: pd.DataFrame) -> pd.DataFrame:
+    """FECHA_OBTENCION quedo mezclada entre 'DD/MM/YYYY' (formato original) y
+    'YYYY-MM-DD' (formato que produjo run_snies.py en otra epoca). El JS del
+    dashboard solo sabe parsear 'DD/MM/YYYY', asi que se unifica aqui."""
+    if df is None or df.empty or "FECHA_OBTENCION" not in df.columns:
+        return df
+    df = df.copy()
+    col = df["FECHA_OBTENCION"].astype(str).str.strip()
+    es_iso = col.str.match(_FECHA_RE_ISO)
+    fechas_iso = pd.to_datetime(col[es_iso], format="%Y-%m-%d", errors="coerce")
+    col.loc[es_iso] = fechas_iso.dt.strftime("%d/%m/%Y")
+    df["FECHA_OBTENCION"] = col
+    return df
+
+
+_DEPTO_ALIAS = {
+    # variantes de ortografia/puntuacion que han aparecido en distintas
+    # descargas del SNIES y que deben tratarse como un solo departamento.
+    "Bogotá D.C.": "Bogotá, D.C.",
+}
+
+
+def _normalizar_depto(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty or "DEPARTAMENTO_OFERTA_PROGRAMA" not in df.columns:
+        return df
+    df = df.copy()
+    df["DEPARTAMENTO_OFERTA_PROGRAMA"] = df["DEPARTAMENTO_OFERTA_PROGRAMA"].replace(_DEPTO_ALIAS)
+    return df
 
 
 def _normalizar_modificados(df: pd.DataFrame) -> pd.DataFrame:
@@ -226,6 +283,8 @@ def _normalizar_modificados(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     df = df.copy()
+    df = _normalizar_fecha_obtencion(df)
+    df = _normalizar_depto(df)
 
     fallbacks = {
         "NOMBRE_DEL_PROGRAMA":          "NOMBRE_DEL_PROGRAMA_NUEVO",
@@ -244,12 +303,29 @@ def _normalizar_modificados(df: pd.DataFrame) -> pd.DataFrame:
             mask = df[base].isna() | (df[base].astype(str).str.strip() == "")
             df.loc[mask, base] = df.loc[mask, nuevo]
 
+    # Valor "actual" de cada campo vigilado: coalesce desde la variante _NUEVO.
+    _fill_text(df, "MODALIDAD", ("MODALIDAD_NUEVO",))
+    _fill_text(df, "MUNICIPIO_OFERTA_PROGRAMA", ("MUNICIPIO_OFERTA_PROGRAMA_NUEVO",))
     _fill_num(df, "NÚMERO_CRÉDITOS",
               ("NÚMERO_CRÉDITOS_NUEVO", "NÚMERO_CRÉDITOS_NUEVOS"))
-    _fill_num(df, "NÚMERO_CRÉDITOS_ANTERIOR",
-              ("NÚMERO_CRÉDITOS_ANTIGUO", "NÚMERO_CRÉDITOS_ANTERIORES"))
+    _fill_num(df, "COSTO_MATRÍCULA_ESTUD_NUEVOS",
+              ("COSTO_MATRÍCULA_ESTUD_NUEVOS_NUEVO",))
     _fill_num(df, "NÚMERO_PERIODOS_DE_DURACIÓN",
               ("NÚMERO_PERIODOS_DE_DURACIÓN_NUEVO",))
+
+    # Valor "anterior" de cada campo vigilado: coalesce desde TODAS las variantes
+    # de sufijo que ha tenido el pipeline a lo largo del tiempo (_ANTIGUO de una
+    # epoca, _ANTERIOR/_ANTERIORES de otra). _fill_num/_fill_text ya no se
+    # detienen en la primera fuente que encuentran, asi que cubren ambas.
+    _fill_text(df, "MODALIDAD_ANTERIOR", ("MODALIDAD_ANTIGUO", "MODALIDAD_ANTERIOR"))
+    _fill_text(df, "MUNICIPIO_OFERTA_PROGRAMA_ANTERIOR",
+               ("MUNICIPIO_OFERTA_PROGRAMA_ANTIGUO", "MUNICIPIO_OFERTA_PROGRAMA_ANTERIOR"))
+    _fill_num(df, "NÚMERO_CRÉDITOS_ANTERIOR",
+              ("NÚMERO_CRÉDITOS_ANTIGUO", "NÚMERO_CRÉDITOS_ANTERIORES", "NÚMERO_CRÉDITOS_ANTERIOR"))
+    _fill_num(df, "COSTO_MATRÍCULA_ESTUD_NUEVOS_ANTERIOR",
+              ("COSTO_MATRÍCULA_ESTUD_NUEVOS_ANTIGUO", "COSTO_MATRÍCULA_ESTUD_NUEVOS_ANTERIOR"))
+    _fill_num(df, "NÚMERO_PERIODOS_DE_DURACIÓN_ANTERIOR",
+              ("NÚMERO_PERIODOS_DE_DURACIÓN_ANTIGUO", "NÚMERO_PERIODOS_DE_DURACIÓN_ANTERIOR"))
 
     vigilar = [
         ("MODALIDAD",                    "MODALIDAD"),
@@ -265,19 +341,145 @@ def _normalizar_modificados(df: pd.DataFrame) -> pd.DataFrame:
         def _rebuild(row):
             parts = []
             for label, col in vigilar:
-                n_col = f"{col}_NUEVO"
-                a_col = next(
-                    (c for c in (f"{col}_ANTIGUO", f"{col}_ANTERIOR") if c in row.index),
-                    None,
-                )
-                if n_col in row.index and a_col:
-                    vn, va = str(row[n_col]).strip(), str(row[a_col]).strip()
+                a_col = f"{col}_ANTERIOR"
+                if col in row.index and a_col in row.index:
+                    vn, va = str(row[col]).strip(), str(row[a_col]).strip()
                     if vn != va and vn not in ("nan", "") and va not in ("nan", ""):
                         parts.append(f"{label}: {va} -> {vn}")
             return " | ".join(parts) if parts else ""
         df.loc[empty, "QUE_CAMBIO"] = df[empty].apply(_rebuild, axis=1)
 
     return df
+
+
+# ── análisis de créditos (pagina dedicada modificados_creditos.html) ──────────
+
+def calcular_analisis_creditos(mods_df: pd.DataFrame) -> dict:
+    """Aisla, dentro de Modificados, los programas que cambiaron de NÚMERO_CRÉDITOS
+    y calcula los cruces que la pagina dedicada necesita: ranking de instituciones/
+    departamentos, sube-vs-baja por sector, y co-cambio con periodos/costo/modalidad/
+    municipio comparado contra la tasa base de cambio de cada uno de esos campos."""
+    vacio = {
+        "n_cambios": 0, "por_sector": [], "top_instituciones": [], "top_departamentos": [],
+        "co_cambios": [], "scatter": [], "deltas": [], "rows": [],
+    }
+    if mods_df is None or mods_df.empty:
+        return vacio
+
+    df = mods_df.copy()
+    cred_n = pd.to_numeric(df.get("NÚMERO_CRÉDITOS"), errors="coerce")
+    cred_a = pd.to_numeric(df.get("NÚMERO_CRÉDITOS_ANTERIOR"), errors="coerce")
+    mask = cred_n.notna() & cred_a.notna() & (cred_n != cred_a)
+    if not mask.any():
+        return vacio
+
+    sub = df[mask].copy()
+    sub["_delta"] = (cred_n[mask] - cred_a[mask]).astype(int)
+    sub["_cred_antes"] = cred_a[mask].astype(int)
+    sub["_cred_despues"] = cred_n[mask].astype(int)
+
+    por_sector = [
+        {
+            "sector": sector,
+            "n": int(len(g)),
+            "promedio_delta": round(float(g["_delta"].mean()), 1),
+            "suben": int((g["_delta"] > 0).sum()),
+            "bajan": int((g["_delta"] < 0).sum()),
+        }
+        for sector, g in sub.groupby("SECTOR")
+    ]
+
+    def _ranking(group_col, top_n=15):
+        out = []
+        for nombre, g in sub.groupby(group_col):
+            if not nombre or str(nombre).strip() in ("", "nan"):
+                continue
+            out.append({
+                "nombre": str(nombre),
+                "n": int(len(g)),
+                "promedio_delta": round(float(g["_delta"].mean()), 1),
+                "suben": int((g["_delta"] > 0).sum()),
+                "bajan": int((g["_delta"] < 0).sum()),
+            })
+        out.sort(key=lambda r: r["n"], reverse=True)
+        return out[:top_n]
+
+    top_instituciones = _ranking("NOMBRE_INSTITUCIÓN")
+    top_departamentos = _ranking("DEPARTAMENTO_OFERTA_PROGRAMA")
+
+    def _coalesced_pair(col):
+        n = pd.to_numeric(df.get(col), errors="coerce")
+        a = pd.to_numeric(df.get(f"{col}_ANTERIOR"), errors="coerce")
+        return n, a
+
+    def _coalesced_pair_text(col):
+        n = df.get(col)
+        a = df.get(f"{col}_ANTERIOR")
+        return n, a
+
+    co_cambios = []
+    campos_num = [
+        ("NÚMERO_PERIODOS_DE_DURACIÓN", "Duración (periodos)"),
+        ("COSTO_MATRÍCULA_ESTUD_NUEVOS", "Costo de matrícula"),
+    ]
+    for col, label in campos_num:
+        n, a = _coalesced_pair(col)
+        valido = n.notna() & a.notna()
+        cambia = valido & (n != a)
+        con_credito = mask & valido
+        co_cambios.append({
+            "campo": label,
+            "n_con_dato": int(con_credito.sum()),
+            "tasa_con_cambio_credito": round(float(100 * (con_credito & cambia).sum()) / max(int(con_credito.sum()), 1), 1),
+            "tasa_base": round(float(100 * cambia.sum()) / max(int(valido.sum()), 1), 1),
+        })
+
+    campos_text = [
+        ("MODALIDAD", "Modalidad"),
+        ("MUNICIPIO_OFERTA_PROGRAMA", "Municipio"),
+    ]
+    for col, label in campos_text:
+        n, a = _coalesced_pair_text(col)
+        if n is None or a is None:
+            continue
+        valido = n.notna() & a.notna() & (n.astype(str).str.strip() != "") & (a.astype(str).str.strip() != "")
+        cambia = valido & (n.astype(str).str.strip() != a.astype(str).str.strip())
+        con_credito = mask & valido
+        co_cambios.append({
+            "campo": label,
+            "n_con_dato": int(con_credito.sum()),
+            "tasa_con_cambio_credito": round(float(100 * (con_credito & cambia).sum()) / max(int(con_credito.sum()), 1), 1),
+            "tasa_base": round(float(100 * cambia.sum()) / max(int(valido.sum()), 1), 1),
+        })
+
+    scatter = [
+        {
+            "antes": int(r["_cred_antes"]), "despues": int(r["_cred_despues"]),
+            "sector": str(r.get("SECTOR", "")), "institucion": str(r.get("NOMBRE_INSTITUCIÓN", "")),
+            "programa": str(r.get("NOMBRE_DEL_PROGRAMA", "")),
+        }
+        for _, r in sub.iterrows()
+    ]
+
+    rows = sub.copy()
+    rows["QUE_CAMBIO"] = rows["QUE_CAMBIO"].fillna("")
+    cols_tabla = [
+        "FECHA_OBTENCION", "CÓDIGO_SNIES_DEL_PROGRAMA", "NOMBRE_DEL_PROGRAMA",
+        "NOMBRE_INSTITUCIÓN", "SECTOR", "DEPARTAMENTO_OFERTA_PROGRAMA",
+        "DIVISIÓN UNINORTE", "_cred_antes", "_cred_despues", "_delta", "QUE_CAMBIO",
+    ]
+    rows_out = _to_records(rows, [c for c in cols_tabla if c in rows.columns])
+
+    return {
+        "n_cambios": int(len(sub)),
+        "por_sector": por_sector,
+        "top_instituciones": top_instituciones,
+        "top_departamentos": top_departamentos,
+        "co_cambios": co_cambios,
+        "scatter": scatter,
+        "deltas": [int(d) for d in sub["_delta"].tolist()],
+        "rows": rows_out,
+    }
 
 
 # ── mapa coroplético ──────────────────────────────────────────────────────────
@@ -378,8 +580,8 @@ def main():
     print("Generando dashboard SNIES...")
 
     historico    = leer_historico()
-    nuevos_df    = leer_novedades("Nuevos_pregrado.xlsx")
-    inactivos_df = leer_novedades("Inactivos_pregrado.xlsx")
+    nuevos_df    = _normalizar_depto(_normalizar_fecha_obtencion(leer_novedades("Nuevos_pregrado.xlsx")))
+    inactivos_df = _normalizar_depto(_normalizar_fecha_obtencion(leer_novedades("Inactivos_pregrado.xlsx")))
     mods_df      = leer_novedades("Modificados_pregrado.xlsx")
     snapshot_df  = leer_snapshot_actual(historico)
 
@@ -474,10 +676,18 @@ def main():
             .replace("__TITLE__",        DETAIL_CFGS[tipo]["title"])
             .replace("__EMOJI__",   DETAIL_CFGS[tipo]["emoji"])
             .replace("__HDRGRD__",  HDR_GRAD[tipo])
+            .replace("__EXTRA_LINK__", EXTRA_LINK[tipo])
         )
         p = DOCS_DIR / f"{tipo}.html"
         p.write_text(html, encoding="utf-8")
         print(f"  HTML: {p}")
+
+    creditos_data = calcular_analisis_creditos(mods_df)
+    creditos_js = json.dumps(creditos_data, ensure_ascii=False).replace("</", "<\\/")
+    creditos_html = CREDITOS_TEMPLATE.replace("__DATA__", creditos_js)
+    creditos_path = DOCS_DIR / "modificados_creditos.html"
+    creditos_path.write_text(creditos_html, encoding="utf-8")
+    print(f"  HTML: {creditos_path}")
 
     print("Dashboard generado OK")
 
@@ -1017,6 +1227,7 @@ tr:hover td{background:#f8fafc}
       <div class="sub">Programas universitarios de pregrado · Colombia</div>
     </div>
   </div>
+  __EXTRA_LINK__
   <div class="badge-update">
     <span style="opacity:.7;font-size:.67rem">Total acumulado</span>
     <strong id="badge-total">–</strong>
@@ -1557,6 +1768,363 @@ function renderAll(rows) {
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
+applyFilters();
+</script>
+</body>
+</html>
+"""
+
+# ── pagina dedicada: analisis de creditos ─────────────────────────────────────
+
+CREDITOS_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Análisis de Créditos · SNIES Monitor</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+:root{
+  --bg:#f1f5f9;--surface:#fff;--text:#0f172a;--muted:#64748b;
+  --border:#e2e8f0;--blue:#2d5b9e;--green:#1a9e6b;--red:#ae1e22;--amber:#bd900b;
+  --radius:0.75rem;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+header{background:linear-gradient(135deg,#15284b,#bd900b);color:#fff;
+  padding:1.2rem 2rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+header h1{font-size:1.25rem;font-weight:700}
+header .sub{font-size:.77rem;opacity:.75;margin-top:.2rem}
+.back-btn{display:inline-flex;align-items:center;gap:.3rem;background:rgba(255,255,255,.2);
+  border:1px solid rgba(255,255,255,.35);color:#fff;text-decoration:none;padding:.38rem .85rem;
+  border-radius:.4rem;font-size:.8rem;font-weight:500;white-space:nowrap;transition:background .15s}
+.back-btn:hover{background:rgba(255,255,255,.32)}
+main{max-width:1380px;margin:0 auto;padding:1.5rem 2rem}
+section{margin-bottom:1.25rem}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+.kpi{background:var(--surface);border-radius:var(--radius);padding:1.1rem 1.4rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.07);border-left:4px solid var(--blue)}
+.kpi.r{border-left-color:var(--red)}.kpi.g{border-left-color:var(--green)}.kpi.a{border-left-color:var(--amber)}
+.kpi-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.4rem}
+.kpi-val{font-size:1.8rem;font-weight:700;line-height:1}
+.kpi-sub{font-size:.7rem;color:var(--muted);margin-top:.35rem}
+.card{background:var(--surface);border-radius:var(--radius);padding:1.2rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.07);margin-bottom:1rem}
+.ct{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-bottom:.85rem}
+.ct-note{font-size:.74rem;color:var(--muted);margin-top:-.5rem;margin-bottom:.75rem}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.filter-bar{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin-bottom:.75rem}
+.f-input{flex:1;min-width:200px;padding:.5rem .8rem;border:1px solid var(--border);
+  border-radius:.4rem;font-size:.8rem;outline:none}
+.f-input:focus{border-color:var(--blue)}
+.f-sel{padding:.4rem .6rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);outline:none;cursor:pointer;max-width:200px}
+.f-btn{padding:.4rem .85rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);cursor:pointer;color:var(--muted);white-space:nowrap}
+.f-btn:hover{background:var(--bg)}
+.f-count{margin-left:auto;font-size:.82rem;font-weight:600;color:var(--blue);white-space:nowrap}
+.tbl-wrap{max-height:480px;overflow-y:auto;border:1px solid var(--border);border-radius:.5rem}
+table{width:100%;border-collapse:collapse;font-size:.77rem}
+th{background:var(--bg);padding:.6rem .85rem;text-align:left;font-size:.67rem;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--muted);cursor:pointer;
+  user-select:none;position:sticky;top:0;z-index:1;white-space:nowrap}
+th:hover{background:#e2e8f0}
+td{padding:.6rem .85rem;border-bottom:1px solid var(--border);vertical-align:top;
+  max-width:270px;word-break:break-word}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8fafc}
+.delta-up{color:var(--green);font-weight:600}
+.delta-down{color:var(--red);font-weight:600}
+.empty{text-align:center;color:var(--muted);padding:2.5rem}
+@media(max-width:900px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  main{padding:1rem}
+  header{flex-direction:column;text-align:center}
+}
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:center;gap:.9rem">
+    <a href="modificados.html" class="back-btn">← Modificados</a>
+    <div>
+      <h1>📐 Análisis de Créditos</h1>
+      <div class="sub">Qué cambia cuando un programa modifica su número de créditos</div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Cambios de créditos detectados</div>
+      <div class="kpi-val" id="k-total">–</div>
+      <div class="kpi-sub">programas con créditos antes/después distintos</div>
+    </div>
+    <div class="kpi g">
+      <div class="kpi-label">Promedio Oficial</div>
+      <div class="kpi-val" id="k-oficial">–</div>
+      <div class="kpi-sub" id="k-oficial-sub">créditos por cambio</div>
+    </div>
+    <div class="kpi r">
+      <div class="kpi-label">Promedio Privado</div>
+      <div class="kpi-val" id="k-privado">–</div>
+      <div class="kpi-sub" id="k-privado-sub">créditos por cambio</div>
+    </div>
+    <div class="kpi a">
+      <div class="kpi-label">También cambia la duración</div>
+      <div class="kpi-val" id="k-cocambio">–</div>
+      <div class="kpi-sub" id="k-cocambio-sub">vs. tasa general</div>
+    </div>
+  </section>
+
+  <section class="g2">
+    <div class="card">
+      <div class="ct">Sube vs. baja, por sector</div>
+      <div id="ch-sector" style="height:280px"></div>
+    </div>
+    <div class="card">
+      <div class="ct">Distribución del cambio (créditos ganados/perdidos)</div>
+      <div id="ch-hist" style="height:280px"></div>
+    </div>
+  </section>
+
+  <section class="g2">
+    <div class="card">
+      <div class="ct">Top instituciones que más cambian créditos</div>
+      <div id="ch-instituciones" style="height:380px"></div>
+    </div>
+    <div class="card">
+      <div class="ct">Top departamentos que más cambian créditos</div>
+      <div id="ch-departamentos" style="height:380px"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="ct">¿Cuando cambian los créditos, qué más cambia?</div>
+    <div class="ct-note">Barra clara = tasa de co-cambio cuando ESTE programa cambió de créditos. Barra oscura = tasa base de cambio de ese campo en todo el universo de Modificados (control).</div>
+    <div id="ch-cocambios" style="height:300px"></div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Créditos: antes → después (coloreado por sector)</div>
+    <div id="ch-scatter" style="height:380px"></div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Registros con cambio de créditos</div>
+    <div class="filter-bar">
+      <input id="f-q" class="f-input" placeholder="Buscar por nombre, institución, departamento…" oninput="applyFilters()">
+      <select id="f-sector" class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
+      <select id="f-depto"  class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
+      <button class="f-btn" onclick="resetFilters()">✕ Limpiar</button>
+      <span class="f-count" id="f-count">–</span>
+    </div>
+    <div class="tbl-wrap" id="tbl-wrap"></div>
+  </section>
+</main>
+
+<script>
+const D = __DATA__;
+const PC = {responsive:true, displayModeBar:false};
+const fmt = n => (n ?? 0).toLocaleString('es-CO');
+const _norm = s => String(s==null?'':s).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function _rowMatches(r, tokens) {
+  if (!tokens.length) return true;
+  const hay = _norm(Object.values(r).join(' '));
+  return tokens.every(t => hay.includes(t));
+}
+
+document.getElementById('k-total').textContent = fmt(D.n_cambios);
+
+const sOficial = D.por_sector.find(s => s.sector === 'Oficial');
+const sPrivado = D.por_sector.find(s => s.sector === 'Privado');
+if (sOficial) {
+  document.getElementById('k-oficial').textContent = (sOficial.promedio_delta > 0 ? '+' : '') + sOficial.promedio_delta;
+  document.getElementById('k-oficial-sub').textContent = `${sOficial.suben} suben / ${sOficial.bajan} bajan`;
+}
+if (sPrivado) {
+  document.getElementById('k-privado').textContent = (sPrivado.promedio_delta > 0 ? '+' : '') + sPrivado.promedio_delta;
+  document.getElementById('k-privado-sub').textContent = `${sPrivado.suben} suben / ${sPrivado.bajan} bajan`;
+}
+const coDuracion = D.co_cambios.find(c => c.campo.includes('Duración'));
+if (coDuracion) {
+  document.getElementById('k-cocambio').textContent = coDuracion.tasa_con_cambio_credito + '%';
+  document.getElementById('k-cocambio-sub').textContent = `vs. ${coDuracion.tasa_base}% tasa general`;
+}
+
+(function() {
+  const el = document.getElementById('ch-sector'); if (!el || !D.por_sector.length) return;
+  const labels = D.por_sector.map(s => s.sector);
+  Plotly.newPlot('ch-sector', [
+    {x: labels, y: D.por_sector.map(s => s.suben), name: 'Suben', type: 'bar',
+     marker: {color: '#1a9e6b', opacity: .85}},
+    {x: labels, y: D.por_sector.map(s => s.bajan), name: 'Bajan', type: 'bar',
+     marker: {color: '#ae1e22', opacity: .85}},
+  ], {
+    barmode: 'group', margin: {t:10,r:10,b:30,l:45},
+    yaxis: {showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.18}
+  }, PC);
+})();
+
+(function() {
+  const el = document.getElementById('ch-hist'); if (!el || !D.deltas.length) return;
+  Plotly.newPlot('ch-hist', [{
+    x: D.deltas, type: 'histogram', marker: {color: '#bd900b', opacity: .85},
+    hovertemplate: 'delta: %{x}<br><b>%{y}</b> programas<extra></extra>'
+  }], {
+    margin: {t:10,r:10,b:40,l:45},
+    xaxis: {title: 'Δ créditos (después - antes)', zeroline: true, zerolinecolor: '#94a3b8'},
+    yaxis: {title: 'N. programas', showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', bargap: .05
+  }, PC);
+})();
+
+function plotRanking(id, data) {
+  const el = document.getElementById(id); if (!el) return;
+  if (!data.length) {
+    el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:.82rem">Sin datos</div>';
+    return;
+  }
+  const d = [...data].slice(0, 12).reverse();
+  const trunc = s => s.length > 38 ? s.slice(0, 38) + '…' : s;
+  Plotly.newPlot(id, [{
+    y: d.map(r => trunc(r.nombre)), x: d.map(r => r.n), customdata: d.map(r => r.nombre),
+    type: 'bar', orientation: 'h', marker: {color: '#bd900b', opacity: .85},
+    text: d.map(r => `prom. ${r.promedio_delta > 0 ? '+' : ''}${r.promedio_delta}`),
+    textposition: 'auto', textfont: {size: 10, color: '#fff'},
+    hovertemplate: '%{customdata}<br><b>%{x}</b> cambios<extra></extra>'
+  }], {
+    margin: {t:10,r:20,b:30,l:230},
+    xaxis: {showgrid: true, gridcolor: '#e2e8f0'},
+    yaxis: {tickfont: {size: 10}},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', bargap: .3
+  }, PC);
+}
+plotRanking('ch-instituciones', D.top_instituciones);
+plotRanking('ch-departamentos', D.top_departamentos);
+
+(function() {
+  const el = document.getElementById('ch-cocambios'); if (!el || !D.co_cambios.length) return;
+  const labels = D.co_cambios.map(c => c.campo);
+  Plotly.newPlot('ch-cocambios', [
+    {x: labels, y: D.co_cambios.map(c => c.tasa_con_cambio_credito), name: 'Cuando cambian créditos',
+     type: 'bar', marker: {color: '#bd900b', opacity: .9}},
+    {x: labels, y: D.co_cambios.map(c => c.tasa_base), name: 'Tasa general (control)',
+     type: 'bar', marker: {color: '#94a3b8', opacity: .9}},
+  ], {
+    barmode: 'group', margin: {t:10,r:10,b:50,l:50},
+    yaxis: {title: '% de los casos', showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.25}
+  }, PC);
+})();
+
+(function() {
+  const el = document.getElementById('ch-scatter'); if (!el || !D.scatter.length) return;
+  const porSector = {};
+  D.scatter.forEach(p => { (porSector[p.sector] = porSector[p.sector] || []).push(p); });
+  const colores = {Oficial: '#2d5b9e', Privado: '#bd900b'};
+  const vals = D.scatter.flatMap(p => [p.antes, p.despues]);
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const traces = Object.entries(porSector).map(([sector, pts]) => ({
+    x: pts.map(p => p.antes), y: pts.map(p => p.despues),
+    text: pts.map(p => p.institucion + ' — ' + p.programa),
+    mode: 'markers', type: 'scatter', name: sector,
+    marker: {color: colores[sector] || '#64748b', size: 7, opacity: .65},
+    hovertemplate: '<b>%{text}</b><br>Antes: %{x} créditos<br>Después: %{y} créditos<extra></extra>'
+  }));
+  traces.push({x: [mn, mx], y: [mn, mx], mode: 'lines', line: {color: '#9fb0c9', width: 1, dash: 'dot'},
+    hoverinfo: 'skip', showlegend: false});
+  Plotly.newPlot('ch-scatter', traces, {
+    margin: {t:10,r:20,b:50,l:60},
+    xaxis: {title: 'Créditos antes', showgrid: true, gridcolor: '#e2e8f0'},
+    yaxis: {title: 'Créditos después', showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.2}
+  }, PC);
+})();
+
+// ── tabla filtrable ──────────────────────────────────────────────────────────
+function uniq(arr) { return [...new Set(arr.filter(v => v && String(v).trim() !== ''))].sort(); }
+function addOpts(id, vals) {
+  const el = document.getElementById(id); if (!el) return;
+  vals.forEach(v => { const o = document.createElement('option'); o.value = o.textContent = v; el.appendChild(o); });
+}
+addOpts('f-sector', uniq(D.rows.map(r => r['SECTOR'])));
+addOpts('f-depto',  uniq(D.rows.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
+
+let filtered = [...D.rows];
+let sortDir = {};
+
+function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+
+function applyFilters() {
+  const qTokens = _norm(gv('f-q')).split(/\s+/).filter(Boolean);
+  const se = gv('f-sector'), de = gv('f-depto');
+  filtered = D.rows.filter(r => {
+    if (!_rowMatches(r, qTokens)) return false;
+    if (se && r['SECTOR'] !== se) return false;
+    if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
+    return true;
+  });
+  document.getElementById('f-count').textContent = fmt(filtered.length) + ' programas';
+  renderTbl(filtered);
+}
+
+function resetFilters() {
+  ['f-q', 'f-sector', 'f-depto'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  applyFilters();
+}
+
+const COL_HEAD = {
+  FECHA_OBTENCION: 'Fecha', 'CÓDIGO_SNIES_DEL_PROGRAMA': 'Cód. SNIES', NOMBRE_DEL_PROGRAMA: 'Programa',
+  'NOMBRE_INSTITUCIÓN': 'Institución', SECTOR: 'Sector', DEPARTAMENTO_OFERTA_PROGRAMA: 'Departamento',
+  'DIVISIÓN UNINORTE': 'División', _cred_antes: 'Créd. antes', _cred_despues: 'Créd. después',
+  _delta: 'Δ', QUE_CAMBIO: '¿Qué más cambió?'
+};
+const TBL_COLS = ['FECHA_OBTENCION', 'NOMBRE_DEL_PROGRAMA', 'NOMBRE_INSTITUCIÓN', 'SECTOR',
+  'DEPARTAMENTO_OFERTA_PROGRAMA', '_cred_antes', '_cred_despues', '_delta', 'QUE_CAMBIO'];
+
+function buildTbl(rows) {
+  const cols = TBL_COLS.filter(c => !rows.length || c in rows[0]);
+  let h = '<table><thead><tr>';
+  cols.forEach(c => { h += '<th onclick="sortTbl(\'' + c + '\')">' + (COL_HEAD[c] || c) + ' <span style="opacity:.4">↕</span></th>'; });
+  h += '</tr></thead><tbody>';
+  if (!rows.length) {
+    h += '<tr><td colspan="' + cols.length + '" class="empty">Sin registros para los filtros seleccionados</td></tr>';
+  } else {
+    rows.forEach(r => {
+      h += '<tr>' + cols.map(c => {
+        if (c === '_delta') {
+          const v = parseFloat(r[c]);
+          const cls = v > 0 ? 'delta-up' : (v < 0 ? 'delta-down' : '');
+          return '<td class="' + cls + '">' + (v > 0 ? '+' : '') + r[c] + '</td>';
+        }
+        return '<td>' + (r[c] || '') + '</td>';
+      }).join('') + '</tr>';
+    });
+  }
+  return h + '</tbody></table>';
+}
+
+function renderTbl(rows) { document.getElementById('tbl-wrap').innerHTML = buildTbl(rows); }
+
+function sortTbl(col) {
+  sortDir[col] = !sortDir[col];
+  filtered = [...filtered].sort((a, b) => {
+    const va = a[col] || '', vb = b[col] || '';
+    const na = parseFloat(va), nb = parseFloat(vb);
+    const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : String(va).localeCompare(String(vb), 'es');
+    return sortDir[col] ? cmp : -cmp;
+  });
+  renderTbl(filtered);
+}
+
 applyFilters();
 </script>
 </body>
