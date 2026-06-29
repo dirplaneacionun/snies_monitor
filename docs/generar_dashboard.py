@@ -31,6 +31,7 @@ COLS_NOVEDAD = [
     "FECHA_OBTENCION", "CÓDIGO_SNIES_DEL_PROGRAMA", "NOMBRE_DEL_PROGRAMA",
     "NOMBRE_INSTITUCIÓN", "SECTOR", "MODALIDAD", "DEPARTAMENTO_OFERTA_PROGRAMA",
     "DIVISIÓN UNINORTE", "NÚMERO_PERIODOS_DE_DURACIÓN",
+    "CINE_F_2013_AC_CAMPO_ESPECÍFIC",
 ]
 COLS_SNAPSHOT = [
     "CÓDIGO_SNIES_DEL_PROGRAMA", "NOMBRE_DEL_PROGRAMA", "NOMBRE_INSTITUCIÓN",
@@ -717,6 +718,16 @@ section{margin-bottom:1.5rem}
 .search{width:100%;max-width:380px;padding:.55rem .9rem;border:1px solid var(--border);
   border-radius:.5rem;font-size:.8rem;margin-bottom:1rem;outline:none}
 .search:focus{border-color:var(--blue)}
+.f-row{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin-bottom:.9rem}
+.f-input{flex:1;min-width:170px;max-width:300px;padding:.5rem .8rem;border:1px solid var(--border);
+  border-radius:.4rem;font-size:.8rem;outline:none}
+.f-input:focus{border-color:var(--blue)}
+.f-sel{padding:.45rem .6rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);outline:none;cursor:pointer;max-width:175px}
+.f-sel:focus{border-color:var(--blue)}
+.f-btn{padding:.45rem .85rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);cursor:pointer;color:var(--muted);white-space:nowrap}
+.f-btn:hover{background:var(--bg)}
 .tbl-wrap{max-height:420px;overflow-y:auto;border:1px solid var(--border);border-radius:.5rem}
 table{width:100%;border-collapse:collapse;font-size:.78rem}
 th{background:var(--bg);padding:.65rem .9rem;text-align:left;font-size:.68rem;
@@ -737,6 +748,7 @@ tr:hover td{background:#f8fafc}
 </style>
 </head>
 <body>
+<datalist id="institucion-list"></datalist>
 <header>
   <div>
     <h1>📊 SNIES Monitor · Uninorte</h1>
@@ -811,7 +823,14 @@ tr:hover td{background:#f8fafc}
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">
         <div class="card-title" style="margin-bottom:0">Programas activos — <span id="snap-title"></span></div>
       </div>
-      <input class="search" id="snap-search" placeholder="Buscar por nombre, institución, código SNIES…" oninput="filterSnap(this.value)" style="max-width:100%">
+      <div class="f-row">
+        <input class="f-input" id="snap-search" placeholder="Buscar por nombre, código SNIES…" oninput="filterSnap()">
+        <input class="f-input" id="snap-institucion" list="institucion-list" placeholder="Buscar institución…" oninput="filterSnap()">
+        <select id="snap-sector" class="f-sel" onchange="filterSnap()"><option value="">Todos los sectores</option></select>
+        <select id="snap-depto" class="f-sel" onchange="filterSnap()"><option value="">Todos los departamentos</option></select>
+        <select id="snap-modalidad" class="f-sel" onchange="filterSnap()"><option value="">Todas las modalidades</option></select>
+        <button class="f-btn" onclick="resetSnapFilters()">✕ Limpiar</button>
+      </div>
       <div class="tbl-wrap" id="snap-tbl"></div>
     </div>
   </section>
@@ -829,15 +848,44 @@ tr:hover td{background:#f8fafc}
       </button>
     </div>
     <div id="tp-nue" class="tab-pane on">
-      <input class="search" placeholder="Buscar por nombre, institución, código SNIES…" oninput="filter('nue',this.value)">
+      <div class="f-row">
+        <input class="f-input" id="q-nue" placeholder="Buscar por nombre, código SNIES…" oninput="filter('nue')">
+        <input class="f-input" id="ins-nue" list="institucion-list" placeholder="Buscar institución…" oninput="filter('nue')">
+        <select id="se-nue" class="f-sel" onchange="filter('nue')"><option value="">Todos los sectores</option></select>
+        <select id="de-nue" class="f-sel" onchange="filter('nue')"><option value="">Todos los departamentos</option></select>
+        <select id="di-nue" class="f-sel" onchange="filter('nue')"><option value="">Todas las divisiones</option></select>
+        <select id="mo-nue" class="f-sel" onchange="filter('nue')"><option value="">Todas las modalidades</option></select>
+        <select id="fe-nue" class="f-sel" onchange="filter('nue')"><option value="">Todas las fechas</option></select>
+        <select id="ci-nue" class="f-sel" onchange="filter('nue')"><option value="">Todos los campos CINE</option></select>
+        <button class="f-btn" onclick="resetTblFilters('nue')">✕ Limpiar</button>
+      </div>
       <div class="tbl-wrap" id="tw-nue"></div>
     </div>
     <div id="tp-ina" class="tab-pane">
-      <input class="search" placeholder="Buscar por nombre, institución, código SNIES…" oninput="filter('ina',this.value)">
+      <div class="f-row">
+        <input class="f-input" id="q-ina" placeholder="Buscar por nombre, código SNIES…" oninput="filter('ina')">
+        <input class="f-input" id="ins-ina" list="institucion-list" placeholder="Buscar institución…" oninput="filter('ina')">
+        <select id="se-ina" class="f-sel" onchange="filter('ina')"><option value="">Todos los sectores</option></select>
+        <select id="de-ina" class="f-sel" onchange="filter('ina')"><option value="">Todos los departamentos</option></select>
+        <select id="di-ina" class="f-sel" onchange="filter('ina')"><option value="">Todas las divisiones</option></select>
+        <select id="mo-ina" class="f-sel" onchange="filter('ina')"><option value="">Todas las modalidades</option></select>
+        <select id="fe-ina" class="f-sel" onchange="filter('ina')"><option value="">Todas las fechas</option></select>
+        <select id="ci-ina" class="f-sel" onchange="filter('ina')"><option value="">Todos los campos CINE</option></select>
+        <button class="f-btn" onclick="resetTblFilters('ina')">✕ Limpiar</button>
+      </div>
       <div class="tbl-wrap" id="tw-ina"></div>
     </div>
     <div id="tp-mod" class="tab-pane">
-      <input class="search" placeholder="Buscar por nombre, institución, código SNIES…" oninput="filter('mod',this.value)">
+      <div class="f-row">
+        <input class="f-input" id="q-mod" placeholder="Buscar por nombre, código SNIES…" oninput="filter('mod')">
+        <input class="f-input" id="ins-mod" list="institucion-list" placeholder="Buscar institución…" oninput="filter('mod')">
+        <select id="se-mod" class="f-sel" onchange="filter('mod')"><option value="">Todos los sectores</option></select>
+        <select id="de-mod" class="f-sel" onchange="filter('mod')"><option value="">Todos los departamentos</option></select>
+        <select id="di-mod" class="f-sel" onchange="filter('mod')"><option value="">Todas las divisiones</option></select>
+        <select id="fe-mod" class="f-sel" onchange="filter('mod')"><option value="">Todas las fechas</option></select>
+        <select id="tc-mod" class="f-sel" onchange="filter('mod')"><option value="">Todos los cambios</option></select>
+        <button class="f-btn" onclick="resetTblFilters('mod')">✕ Limpiar</button>
+      </div>
       <div class="tbl-wrap" id="tw-mod"></div>
     </div>
   </section>
@@ -851,6 +899,13 @@ function _rowMatches(r, tokens) {
   if (!tokens.length) return true;
   const hay = _norm(Object.values(r).join(' '));
   return tokens.every(t => hay.includes(t));
+}
+function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+const parseFecha = s => { try { const [d,m,y]=s.split('/'); return new Date(+y,+m-1,+d); } catch(e){return new Date(0);} };
+function uniq(arr) { return [...new Set(arr.filter(v => v && String(v).trim() !== ''))].sort(); }
+function addOpts(id, vals) {
+  const el = document.getElementById(id); if (!el) return;
+  vals.forEach(v => { const o = document.createElement('option'); o.value = o.textContent = v; el.appendChild(o); });
 }
 document.getElementById('fecha-update').textContent = D.ultima_actualizacion;
 document.getElementById('k-total').textContent = fmt(D.kpis.total_activos);
@@ -996,14 +1051,35 @@ function _buildSnapTbl(data) {
   return h + '</tbody></table>';
 }
 
-function filterSnap(q) {
-  const tokens = _norm(q).split(/\s+/).filter(Boolean);
-  const base = _snapAll.filter(r => {
+addOpts('snap-sector',    uniq(_snapAll.map(r => r['SECTOR'])));
+addOpts('snap-depto',     uniq(_snapAll.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
+addOpts('snap-modalidad', uniq(_snapAll.map(r => r['MODALIDAD'])));
+
+function filterSnap() {
+  const qTokens = _norm(gv('snap-search')).split(/\s+/).filter(Boolean);
+  const insTokens = _norm(gv('snap-institucion')).split(/\s+/).filter(Boolean);
+  const se = gv('snap-sector'), de = gv('snap-depto'), mo = gv('snap-modalidad');
+  const res = _snapAll.filter(r => {
     const v = r['NÚMERO_PERIODOS_DE_DURACIÓN'];
-    return v !== undefined && v !== '' && Math.round(parseFloat(String(v))) === periodosFiltro;
+    if (!(v !== undefined && v !== '' && Math.round(parseFloat(String(v))) === periodosFiltro)) return false;
+    if (!_rowMatches(r, qTokens)) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
+    if (se && r['SECTOR'] !== se) return false;
+    if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
+    if (mo && r['MODALIDAD'] !== mo) return false;
+    return true;
   });
-  const res = tokens.length ? base.filter(r => _rowMatches(r, tokens)) : base;
   document.getElementById('snap-tbl').innerHTML = _buildSnapTbl(res);
+}
+
+function resetSnapFilters() {
+  ['snap-search','snap-institucion','snap-sector','snap-depto','snap-modalidad'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  filterSnap();
 }
 
 function _updateChipStyles() {
@@ -1027,8 +1103,10 @@ function setPeriodosFilter(val) {
   document.getElementById('periodos-chip').style.display = 'flex';
   document.getElementById('periodos-chip-val').textContent = label;
   document.getElementById('snap-title').textContent = label;
-  const si = document.getElementById('snap-search'); if (si) si.value = '';
-  document.getElementById('snap-tbl').innerHTML = _buildSnapTbl(matching);
+  ['snap-search','snap-institucion','snap-sector','snap-depto','snap-modalidad'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  filterSnap();
   document.getElementById('snap-section').style.display = 'block';
   _updateChipStyles();
   document.getElementById('snap-section').scrollIntoView({behavior:'smooth'});
@@ -1057,7 +1135,39 @@ const HEAD = {
   QUE_CAMBIO:'¿Qué cambió?'
 };
 const rows = {nue: D.nuevos, ina: D.inactivos, mod: D.modificados};
+let filteredRows = {nue: rows.nue, ina: rows.ina, mod: rows.mod};
 let sortDir = {};
+
+const FILTROS_TIPO = {
+  nue: ['se','de','di','mo','fe','ci'],
+  ina: ['se','de','di','mo','fe','ci'],
+  mod: ['se','de','di','fe','tc'],
+};
+
+addOpts('institucion-list', uniq([
+  ..._snapAll.map(r => r['NOMBRE_INSTITUCIÓN']),
+  ...rows.nue.map(r => r['NOMBRE_INSTITUCIÓN']),
+  ...rows.ina.map(r => r['NOMBRE_INSTITUCIÓN']),
+  ...rows.mod.map(r => r['NOMBRE_INSTITUCIÓN']),
+]));
+
+['nue','ina'].forEach(t => {
+  addOpts('se-'+t, uniq(rows[t].map(r => r['SECTOR'])));
+  addOpts('de-'+t, uniq(rows[t].map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
+  addOpts('di-'+t, uniq(rows[t].map(r => r['DIVISIÓN UNINORTE'])));
+  addOpts('mo-'+t, uniq(rows[t].map(r => r['MODALIDAD'])));
+  addOpts('fe-'+t, uniq(rows[t].map(r => r['FECHA_OBTENCION'])).sort((a,b) => parseFecha(b)-parseFecha(a)));
+  addOpts('ci-'+t, uniq(rows[t].map(r => (r['CINE_F_2013_AC_CAMPO_ESPECÍFIC']||'').trim())));
+});
+addOpts('se-mod', uniq(rows.mod.map(r => r['SECTOR'])));
+addOpts('de-mod', uniq(rows.mod.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
+addOpts('di-mod', uniq(rows.mod.map(r => r['DIVISIÓN UNINORTE'])));
+addOpts('fe-mod', uniq(rows.mod.map(r => r['FECHA_OBTENCION'])).sort((a,b) => parseFecha(b)-parseFecha(a)));
+{
+  const cs = new Set();
+  rows.mod.forEach(r => { (r['QUE_CAMBIO']||'').split(' | ').forEach(p => { const f=p.split(':')[0].trim(); if(f&&f!=='nan'&&f!=='') cs.add(f); }); });
+  addOpts('tc-mod', [...cs].sort());
+}
 
 function buildTbl(type, data) {
   const cols = COLS[type].filter(c => !data.length || c in data[0]);
@@ -1092,20 +1202,45 @@ function tab(id, btn) {
   btn.classList.add('on');
 }
 
-function filter(type, q) {
-  const tokens = _norm(q).split(/\s+/).filter(Boolean);
-  const res = tokens.length ? rows[type].filter(r => _rowMatches(r, tokens)) : rows[type];
+function filter(type) {
+  const qTokens = _norm(gv('q-'+type)).split(/\s+/).filter(Boolean);
+  const insTokens = _norm(gv('ins-'+type)).split(/\s+/).filter(Boolean);
+  const se = gv('se-'+type), de = gv('de-'+type), di = gv('di-'+type);
+  const mo = gv('mo-'+type), fe = gv('fe-'+type), ci = gv('ci-'+type), tc = gv('tc-'+type);
+
+  const res = rows[type].filter(r => {
+    if (!_rowMatches(r, qTokens)) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
+    if (se && r['SECTOR'] !== se) return false;
+    if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
+    if (di && r['DIVISIÓN UNINORTE'] !== di) return false;
+    if (mo && r['MODALIDAD'] !== mo) return false;
+    if (fe && r['FECHA_OBTENCION'] !== fe) return false;
+    if (ci && (r['CINE_F_2013_AC_CAMPO_ESPECÍFIC']||'').trim() !== ci) return false;
+    if (tc && !(r['QUE_CAMBIO']||'').includes(tc)) return false;
+    return true;
+  });
+  filteredRows[type] = res;
   render(type, res);
+}
+
+function resetTblFilters(type) {
+  (FILTROS_TIPO[type]||[]).forEach(p => { const el = document.getElementById(p+'-'+type); if (el) el.value=''; });
+  ['q-'+type, 'ins-'+type].forEach(id => { const el = document.getElementById(id); if (el) el.value=''; });
+  filter(type);
 }
 
 function sortTbl(type, col) {
   const key = type + col;
   sortDir[key] = !sortDir[key];
-  rows[type] = [...rows[type]].sort((a, b) => {
+  filteredRows[type] = [...filteredRows[type]].sort((a, b) => {
     const va = a[col] || '', vb = b[col] || '';
     return sortDir[key] ? va.localeCompare(vb, 'es') : vb.localeCompare(va, 'es');
   });
-  render(type, rows[type]);
+  render(type, filteredRows[type]);
 }
 </script>
 </body>
@@ -1203,6 +1338,9 @@ tr:hover td{background:#f8fafc}
   <input id="f-q" class="f-input" placeholder="Buscar por nombre, institución, código SNIES, departamento…" oninput="applyFilters()">
   <select id="f-sector"   class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
   <select id="f-depto"    class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
+  <input id="f-institucion" class="f-sel" list="institucion-list" placeholder="Buscar institucion..."
+         style="cursor:text;max-width:240px" oninput="applyFilters()">
+  <datalist id="institucion-list"></datalist>
   __FDIV_SELECT__
   __XFILTER__
   <select id="f-fecha"    class="f-sel" onchange="applyFilters()"><option value="">Todas las fechas</option></select>
@@ -1272,6 +1410,7 @@ function addOpts(id, vals) {
 addOpts('f-sector',   uniq(ROWS.map(r => r['SECTOR'])));
 addOpts('f-depto',    uniq(ROWS.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
 addOpts('f-division', uniq(ROWS.map(r => r['DIVISIÓN UNINORTE'])));
+addOpts('institucion-list', uniq(ROWS.map(r => r['NOMBRE_INSTITUCIÓN'])));
 
 // Sort fechas newest-first (DD/MM/YYYY)
 const parseFecha = s => { try { const [d,m,y]=s.split('/'); return new Date(+y,+m-1,+d); } catch(e){return new Date(0);} };
@@ -1295,6 +1434,7 @@ function applyFilters() {
   const se = gv('f-sector'), de = gv('f-depto'), di = gv('f-division');
   const mo = gv('f-modalidad'), fe = gv('f-fecha'), tc = gv('f-tipo-cambio');
   const ci = gv('f-cine');
+  const insTokens = _norm(gv('f-institucion')).split(/\s+/).filter(Boolean);
 
   filtered = ROWS.filter(r => {
     if (!_rowMatches(r, qTokens)) return false;
@@ -1305,13 +1445,17 @@ function applyFilters() {
     if (fe && r['FECHA_OBTENCION'] !== fe) return false;
     if (tc && !(r['QUE_CAMBIO']||'').includes(tc)) return false;
     if (ci && (r['CINE_F_2013_AC_CAMPO_ESPECÍFIC']||'').trim() !== ci) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
     return true;
   });
   renderAll(filtered);
 }
 
 function resetFilters() {
-  ['f-q','f-sector','f-depto','f-division','f-modalidad','f-fecha','f-tipo-cambio','f-cine'].forEach(id => {
+  ['f-q','f-sector','f-depto','f-institucion','f-division','f-modalidad','f-fecha','f-tipo-cambio','f-cine'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   _periodosDet=null;
@@ -1826,7 +1970,9 @@ tr:hover td{background:#f8fafc}
   <input id="f-q" class="f-input" placeholder="Buscar por nombre, institucion, departamento... (filtra TODA la pagina)" oninput="applyFilters()">
   <select id="f-sector" class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
   <select id="f-depto"  class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
-  <select id="f-institucion" class="f-sel" onchange="applyFilters()"><option value="">Todas las instituciones</option></select>
+  <input id="f-institucion" class="f-sel" list="institucion-list" placeholder="Buscar institucion..."
+         style="cursor:text;max-width:240px" oninput="applyFilters()">
+  <datalist id="institucion-list"></datalist>
   <button class="f-btn" onclick="resetFilters()">✕ Limpiar</button>
   <span class="f-count" id="f-count">–</span>
 </div>
@@ -2168,19 +2314,23 @@ function addOpts(id, vals) {
 }
 addOpts('f-sector', uniq(D.universo.map(r => r['SECTOR'])));
 addOpts('f-depto',  uniq(D.universo.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
-addOpts('f-institucion', uniq(D.universo.map(r => r['NOMBRE_INSTITUCIÓN'])));
+addOpts('institucion-list', uniq(D.universo.map(r => r['NOMBRE_INSTITUCIÓN'])));
 
 function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 
 function applyFilters() {
   const qTokens = _norm(gv('f-q')).split(/\s+/).filter(Boolean);
-  const se = gv('f-sector'), de = gv('f-depto'), ins = gv('f-institucion');
+  const se = gv('f-sector'), de = gv('f-depto');
+  const insTokens = _norm(gv('f-institucion')).split(/\s+/).filter(Boolean);
 
   const filtrados = D.universo.filter(r => {
     if (!_rowMatches(r, qTokens)) return false;
     if (se && r['SECTOR'] !== se) return false;
     if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
-    if (ins && r['NOMBRE_INSTITUCIÓN'] !== ins) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
     return true;
   });
   const creditRows = filtrados.filter(r => r._cambia_credito);

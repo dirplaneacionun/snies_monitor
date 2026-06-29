@@ -86,7 +86,9 @@ tr:hover td{background:#f8fafc}
   <input id="f-q" class="f-input" placeholder="Buscar por nombre, institucion, departamento... (filtra TODA la pagina)" oninput="applyFilters()">
   <select id="f-sector" class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
   <select id="f-depto"  class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
-  <select id="f-institucion" class="f-sel" onchange="applyFilters()"><option value="">Todas las instituciones</option></select>
+  <input id="f-institucion" class="f-sel" list="institucion-list" placeholder="Buscar institucion..."
+         style="cursor:text;max-width:240px" oninput="applyFilters()">
+  <datalist id="institucion-list"></datalist>
   <button class="f-btn" onclick="resetFilters()">✕ Limpiar</button>
   <span class="f-count" id="f-count">–</span>
 </div>
@@ -428,19 +430,23 @@ function addOpts(id, vals) {
 }
 addOpts('f-sector', uniq(D.universo.map(r => r['SECTOR'])));
 addOpts('f-depto',  uniq(D.universo.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
-addOpts('f-institucion', uniq(D.universo.map(r => r['NOMBRE_INSTITUCIÓN'])));
+addOpts('institucion-list', uniq(D.universo.map(r => r['NOMBRE_INSTITUCIÓN'])));
 
 function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
 
 function applyFilters() {
   const qTokens = _norm(gv('f-q')).split(/\s+/).filter(Boolean);
-  const se = gv('f-sector'), de = gv('f-depto'), ins = gv('f-institucion');
+  const se = gv('f-sector'), de = gv('f-depto');
+  const insTokens = _norm(gv('f-institucion')).split(/\s+/).filter(Boolean);
 
   const filtrados = D.universo.filter(r => {
     if (!_rowMatches(r, qTokens)) return false;
     if (se && r['SECTOR'] !== se) return false;
     if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
-    if (ins && r['NOMBRE_INSTITUCIÓN'] !== ins) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
     return true;
   });
   const creditRows = filtrados.filter(r => r._cambia_credito);

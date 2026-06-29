@@ -87,6 +87,9 @@ tr:hover td{background:#f8fafc}
   <input id="f-q" class="f-input" placeholder="Buscar por nombre, institución, código SNIES, departamento…" oninput="applyFilters()">
   <select id="f-sector"   class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
   <select id="f-depto"    class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
+  <input id="f-institucion" class="f-sel" list="institucion-list" placeholder="Buscar institucion..."
+         style="cursor:text;max-width:240px" oninput="applyFilters()">
+  <datalist id="institucion-list"></datalist>
   <select id="f-cine" class="f-sel" onchange="applyFilters()"><option value="">Todos los campos CINE</option></select>
   <select id="f-modalidad" class="f-sel" onchange="applyFilters()"><option value="">Todas las modalidades</option></select>
   <select id="f-fecha"    class="f-sel" onchange="applyFilters()"><option value="">Todas las fechas</option></select>
@@ -182,6 +185,7 @@ function addOpts(id, vals) {
 addOpts('f-sector',   uniq(ROWS.map(r => r['SECTOR'])));
 addOpts('f-depto',    uniq(ROWS.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
 addOpts('f-division', uniq(ROWS.map(r => r['DIVISIÓN UNINORTE'])));
+addOpts('institucion-list', uniq(ROWS.map(r => r['NOMBRE_INSTITUCIÓN'])));
 
 // Sort fechas newest-first (DD/MM/YYYY)
 const parseFecha = s => { try { const [d,m,y]=s.split('/'); return new Date(+y,+m-1,+d); } catch(e){return new Date(0);} };
@@ -205,6 +209,7 @@ function applyFilters() {
   const se = gv('f-sector'), de = gv('f-depto'), di = gv('f-division');
   const mo = gv('f-modalidad'), fe = gv('f-fecha'), tc = gv('f-tipo-cambio');
   const ci = gv('f-cine');
+  const insTokens = _norm(gv('f-institucion')).split(/\s+/).filter(Boolean);
 
   filtered = ROWS.filter(r => {
     if (!_rowMatches(r, qTokens)) return false;
@@ -215,13 +220,17 @@ function applyFilters() {
     if (fe && r['FECHA_OBTENCION'] !== fe) return false;
     if (tc && !(r['QUE_CAMBIO']||'').includes(tc)) return false;
     if (ci && (r['CINE_F_2013_AC_CAMPO_ESPECÍFIC']||'').trim() !== ci) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
     return true;
   });
   renderAll(filtered);
 }
 
 function resetFilters() {
-  ['f-q','f-sector','f-depto','f-division','f-modalidad','f-fecha','f-tipo-cambio','f-cine'].forEach(id => {
+  ['f-q','f-sector','f-depto','f-institucion','f-division','f-modalidad','f-fecha','f-tipo-cambio','f-cine'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
   });
   _periodosDet=null;
