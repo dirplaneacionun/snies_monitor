@@ -78,7 +78,8 @@ HDR_GRAD = {
 EXTRA_LINK = {
     "nuevos": "",
     "inactivos": "",
-    "modificados": '<a href="modificados_creditos.html" class="back-btn">📐 Análisis de Créditos →</a>',
+    "modificados": '<a href="modificados_creditos.html" class="back-btn">📐 Análisis de Créditos →</a>'
+                   '<a href="modificados_costos.html" class="back-btn">💰 Análisis de Costos →</a>',
 }
 
 XFILTER = {
@@ -448,6 +449,80 @@ def calcular_analisis_creditos(mods_df: pd.DataFrame) -> dict:
     return {"universo": universo}
 
 
+def calcular_analisis_costos(mods_df: pd.DataFrame) -> dict:
+    """Mismo patron que calcular_analisis_creditos pero para costo de matricula.
+    Se usa % de cambio (no el delta en pesos) como metrica principal porque el
+    costo varia en ordenes de magnitud distintos entre programas (de ~200 mil a
+    ~30 millones), asi que un delta absoluto no es comparable entre programas
+    mientras que el % si lo es."""
+    if mods_df is None or mods_df.empty:
+        return {"universo": []}
+
+    df = mods_df.copy()
+
+    def _num_pair(col):
+        n = pd.to_numeric(df.get(col), errors="coerce")
+        a = pd.to_numeric(df.get(f"{col}_ANTERIOR"), errors="coerce")
+        return n, a
+
+    def _flag_num(col):
+        n, a = _num_pair(col)
+        valido = n.notna() & a.notna()
+        out = pd.Series(pd.NA, index=df.index, dtype="boolean")
+        out[valido] = (n != a)[valido]
+        return out
+
+    def _flag_text(col):
+        n, a = df.get(col), df.get(f"{col}_ANTERIOR")
+        out = pd.Series(pd.NA, index=df.index, dtype="boolean")
+        if n is None or a is None:
+            return out
+        valido = n.notna() & a.notna() & (n.astype(str).str.strip() != "") & (a.astype(str).str.strip() != "")
+        cambia = n.astype(str).str.strip() != a.astype(str).str.strip()
+        out[valido] = cambia[valido]
+        return out
+
+    costo_n, costo_a = _num_pair("COSTO_MATRÍCULA_ESTUD_NUEVOS")
+    costo_valido = costo_n.notna() & costo_a.notna() & (costo_a > 0)
+    if not costo_valido.any():
+        return {"universo": []}
+
+    out = pd.DataFrame({
+        "FECHA_OBTENCION":               df.get("FECHA_OBTENCION"),
+        "CÓDIGO_SNIES_DEL_PROGRAMA":     df.get("CÓDIGO_SNIES_DEL_PROGRAMA"),
+        "NOMBRE_DEL_PROGRAMA":           df.get("NOMBRE_DEL_PROGRAMA"),
+        "NOMBRE_INSTITUCIÓN":            df.get("NOMBRE_INSTITUCIÓN"),
+        "SECTOR":                        df.get("SECTOR"),
+        "DEPARTAMENTO_OFERTA_PROGRAMA":  df.get("DEPARTAMENTO_OFERTA_PROGRAMA"),
+        "DIVISIÓN UNINORTE":             df.get("DIVISIÓN UNINORTE"),
+        "CINE_F_2013_AC_CAMPO_ESPECÍFIC": df.get("CINE_F_2013_AC_CAMPO_ESPECÍFIC"),
+        "QUE_CAMBIO":                    df.get("QUE_CAMBIO"),
+        "_costo_antes":    costo_a,
+        "_costo_despues":  costo_n,
+        "_delta":          costo_n - costo_a,
+        "_delta_pct":      (costo_n - costo_a) / costo_a * 100,
+        "_cambia_costo":   costo_n != costo_a,
+        "_cambia_credito":    _flag_num("NÚMERO_CRÉDITOS"),
+        "_cambia_periodo":    _flag_num("NÚMERO_PERIODOS_DE_DURACIÓN"),
+        "_cambia_modalidad":  _flag_text("MODALIDAD"),
+        "_cambia_municipio":  _flag_text("MUNICIPIO_OFERTA_PROGRAMA"),
+    })
+
+    # El universo de esta pagina son los programas con par antes/despues de
+    # costo de matricula verificable (con o sin cambio real: el "sin cambio"
+    # es el grupo de control para la tasa base de los otros campos).
+    out = out[costo_valido].copy()
+    out["QUE_CAMBIO"] = out["QUE_CAMBIO"].fillna("")
+    for c in ("_costo_antes", "_costo_despues", "_delta"):
+        out[c] = out[c].astype(int)
+    out["_delta_pct"] = out["_delta_pct"].round(1)
+
+    records = out.to_dict("records")
+    universo = [{k: _clean_json_scalar(v) for k, v in r.items()} for r in records]
+
+    return {"universo": universo}
+
+
 # ── mapa coroplético ──────────────────────────────────────────────────────────
 
 _DEPTO_MAP = {
@@ -654,6 +729,13 @@ def main():
     creditos_path = DOCS_DIR / "modificados_creditos.html"
     creditos_path.write_text(creditos_html, encoding="utf-8")
     print(f"  HTML: {creditos_path}")
+
+    costos_data = calcular_analisis_costos(mods_df)
+    costos_js = json.dumps(costos_data, ensure_ascii=False).replace("</", "<\\/")
+    costos_html = COSTOS_TEMPLATE.replace("__DATA__", costos_js)
+    costos_path = DOCS_DIR / "modificados_costos.html"
+    costos_path.write_text(costos_html, encoding="utf-8")
+    print(f"  HTML: {costos_path}")
 
     print("Dashboard generado OK")
 
@@ -2052,6 +2134,7 @@ tr:hover td{background:#f8fafc}
       <div class="sub">Que cambia cuando un programa modifica su numero de creditos</div>
     </div>
   </div>
+  <a href="modificados_costos.html" class="back-btn">💰 Analisis de Costos →</a>
 </header>
 
 <div class="filter-bar">
@@ -2472,6 +2555,538 @@ function applyFilters() {
   renderCoCambios(coCambios);
   renderScatter(creditRows);
   renderTbl(creditRows);
+}
+
+function resetFilters() {
+  ['f-q', 'f-sector', 'f-depto', 'f-institucion'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  applyFilters();
+}
+
+applyFilters();
+</script>
+</body>
+</html>
+"""
+
+COSTOS_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Analisis de Costos de Matricula . SNIES Monitor</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+:root{
+  --bg:#f1f5f9;--surface:#fff;--text:#0f172a;--muted:#64748b;
+  --border:#e2e8f0;--blue:#2d5b9e;--green:#1a9e6b;--red:#ae1e22;--amber:#bd900b;
+  --radius:0.75rem;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+header{background:linear-gradient(135deg,#15284b,#1a9e6b);color:#fff;
+  padding:1.2rem 2rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
+header h1{font-size:1.25rem;font-weight:700}
+header .sub{font-size:.77rem;opacity:.75;margin-top:.2rem}
+.back-btn{display:inline-flex;align-items:center;gap:.3rem;background:rgba(255,255,255,.2);
+  border:1px solid rgba(255,255,255,.35);color:#fff;text-decoration:none;padding:.38rem .85rem;
+  border-radius:.4rem;font-size:.8rem;font-weight:500;white-space:nowrap;transition:background .15s}
+.back-btn:hover{background:rgba(255,255,255,.32)}
+.filter-bar{position:sticky;top:0;z-index:100;background:var(--surface);
+  border-bottom:1px solid var(--border);padding:.6rem 2rem;
+  display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.06)}
+.f-input{flex:1;min-width:200px;padding:.5rem .8rem;border:1px solid var(--border);
+  border-radius:.4rem;font-size:.8rem;outline:none}
+.f-input:focus{border-color:var(--blue)}
+.f-sel{padding:.4rem .6rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);outline:none;cursor:pointer;max-width:200px}
+.f-btn{padding:.4rem .85rem;border:1px solid var(--border);border-radius:.4rem;
+  font-size:.77rem;background:var(--surface);cursor:pointer;color:var(--muted);white-space:nowrap}
+.f-btn:hover{background:var(--bg)}
+.f-count{margin-left:auto;font-size:.82rem;font-weight:600;color:var(--blue);white-space:nowrap}
+.ac-wrap{position:relative;flex:0 1 240px}
+.ac-menu{position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:300;
+  background:var(--surface);border:1px solid var(--border);border-radius:.4rem;
+  box-shadow:0 8px 20px rgba(0,0,0,.14);max-height:260px;overflow-y:auto;display:none}
+.ac-menu.show{display:block}
+.ac-item{padding:.45rem .75rem;font-size:.78rem;cursor:pointer;color:var(--text)}
+.ac-item:hover{background:var(--bg)}
+.ac-empty{padding:.45rem .75rem;font-size:.78rem;color:var(--muted)}
+main{max-width:1380px;margin:0 auto;padding:1.5rem 2rem}
+section{margin-bottom:1.25rem}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+.kpi{background:var(--surface);border-radius:var(--radius);padding:1.1rem 1.4rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.07);border-left:4px solid var(--blue)}
+.kpi.r{border-left-color:var(--red)}.kpi.g{border-left-color:var(--green)}.kpi.a{border-left-color:var(--amber)}
+.kpi-label{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:.4rem}
+.kpi-val{font-size:1.8rem;font-weight:700;line-height:1}
+.kpi-sub{font-size:.7rem;color:var(--muted);margin-top:.35rem}
+.card{background:var(--surface);border-radius:var(--radius);padding:1.2rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.07);margin-bottom:1rem}
+.ct{font-size:.68rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--muted);margin-bottom:.85rem}
+.ct-note{font-size:.74rem;color:var(--muted);margin-top:-.5rem;margin-bottom:.75rem;line-height:1.4}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:1rem}
+.tbl-wrap{max-height:480px;overflow-y:auto;border:1px solid var(--border);border-radius:.5rem}
+table{width:100%;border-collapse:collapse;font-size:.77rem}
+th{background:var(--bg);padding:.6rem .85rem;text-align:left;font-size:.67rem;
+  text-transform:uppercase;letter-spacing:.05em;color:var(--muted);cursor:pointer;
+  user-select:none;position:sticky;top:0;z-index:1;white-space:nowrap}
+th:hover{background:#e2e8f0}
+td{padding:.6rem .85rem;border-bottom:1px solid var(--border);vertical-align:top;
+  max-width:270px;word-break:break-word}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#f8fafc}
+.delta-up{color:var(--red);font-weight:600}
+.delta-down{color:var(--green);font-weight:600}
+.empty{text-align:center;color:var(--muted);padding:2.5rem}
+@media(max-width:900px){
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .g2{grid-template-columns:1fr}
+  main{padding:1rem}
+  header{flex-direction:column;text-align:center}
+  .f-count{margin-left:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:center;gap:.9rem">
+    <a href="modificados.html" class="back-btn">← Modificados</a>
+    <div>
+      <h1>💰 Analisis de Costos de Matricula</h1>
+      <div class="sub">Que cambia cuando un programa modifica el costo de matricula</div>
+    </div>
+  </div>
+  <a href="modificados_creditos.html" class="back-btn">📐 Analisis de Creditos →</a>
+</header>
+
+<div class="filter-bar">
+  <input id="f-q" class="f-input" placeholder="Buscar por nombre, institucion, departamento... (filtra TODA la pagina)" oninput="applyFilters()">
+  <select id="f-sector" class="f-sel" onchange="applyFilters()"><option value="">Todos los sectores</option></select>
+  <select id="f-depto"  class="f-sel" onchange="applyFilters()"><option value="">Todos los departamentos</option></select>
+  <div class="ac-wrap">
+    <input id="f-institucion" class="f-sel" placeholder="Buscar institucion..." style="cursor:text;width:100%" oninput="applyFilters()">
+    <div class="ac-menu" id="f-institucion-menu"></div>
+  </div>
+  <button class="f-btn" onclick="resetFilters()">✕ Limpiar</button>
+  <span class="f-count" id="f-count">–</span>
+</div>
+
+<main>
+  <section class="kpi-grid">
+    <div class="kpi">
+      <div class="kpi-label">Cambios de costo detectados</div>
+      <div class="kpi-val" id="k-total">–</div>
+      <div class="kpi-sub">programas con costo antes/despues distinto</div>
+    </div>
+    <div class="kpi r">
+      <div class="kpi-label">delta % promedio . Oficial</div>
+      <div class="kpi-val" id="k-oficial">–</div>
+      <div class="kpi-sub" id="k-oficial-sub">de costo por cambio</div>
+    </div>
+    <div class="kpi g">
+      <div class="kpi-label">delta % promedio . Privado</div>
+      <div class="kpi-val" id="k-privado">–</div>
+      <div class="kpi-sub" id="k-privado-sub">de costo por cambio</div>
+    </div>
+    <div class="kpi a">
+      <div class="kpi-label">Aumento maximo detectado</div>
+      <div class="kpi-val" id="k-max">–</div>
+      <div class="kpi-sub" id="k-max-sub">sin datos</div>
+    </div>
+  </section>
+  <div class="ct-note" style="margin:-.5rem 0 1rem">
+    "delta % promedio" = cambio promedio porcentual en el costo de matricula (costo despues vs. costo antes) entre
+    los programas modificados de ese grupo. Se usa % y no pesos porque el costo varia en ordenes de magnitud
+    distintos entre programas, asi que el porcentaje es lo unico comparable entre ellos.
+    <strong>Negativo</strong> significa que, en promedio, baja la matricula; <strong>positivo</strong>, que sube.
+  </div>
+
+  <section class="g2">
+    <div class="card">
+      <div class="ct">Sube vs. baja, por sector</div>
+      <div id="ch-sector" style="height:280px"></div>
+    </div>
+    <div class="card">
+      <div class="ct">Distribucion del cambio (% de costo de matricula)</div>
+      <div id="ch-hist" style="height:280px"></div>
+    </div>
+  </section>
+
+  <section class="g2">
+    <div class="card">
+      <div class="ct">Top instituciones que mas cambian el costo</div>
+      <div class="ct-note">Numero al lado de la barra: delta % promedio de esa institucion (ver definicion arriba).</div>
+      <div id="ch-instituciones" style="height:380px"></div>
+    </div>
+    <div class="card">
+      <div class="ct">Top departamentos que mas cambian el costo</div>
+      <div class="ct-note">Numero al lado de la barra: delta % promedio de ese departamento (ver definicion arriba).</div>
+      <div id="ch-departamentos" style="height:380px"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Por campo CINE: que areas suben o bajan el costo de matricula</div>
+    <div class="ct-note">Filtra por institucion arriba para ver el detalle de su oferta. Cada barra es un campo
+      CINE; el valor es el cambio % promedio entre los programas de ese campo. Rojo = en promedio sube el costo;
+      verde = en promedio baja.</div>
+    <div id="ch-cine-delta" style="height:420px"></div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Cuando cambia el costo, que mas cambia?</div>
+    <div class="ct-note">Barra ambar = entre los programas <strong>con</strong> cambio de costo, que % tambien
+      cambio ese campo. Barra gris = tasa base: que % cambia ese campo entre TODOS los programas modificados
+      visibles con los filtros actuales (con o sin cambio de costo) - es el punto de comparacion.</div>
+    <div id="ch-cocambios" style="height:300px"></div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Costo de matricula: antes -&gt; despues (coloreado por sector, escala log)</div>
+    <div id="ch-scatter" style="height:380px"></div>
+  </section>
+
+  <section class="card">
+    <div class="ct">Registros con cambio de costo</div>
+    <div class="tbl-wrap" id="tbl-wrap"></div>
+  </section>
+</main>
+
+<script>
+const D = __DATA__;
+const PC = {responsive:true, displayModeBar:false};
+const fmt = n => (n ?? 0).toLocaleString('es-CO');
+const _norm = s => String(s==null?'':s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+function _rowMatches(r, tokens) {
+  if (!tokens.length) return true;
+  const hay = _norm(Object.values(r).join(' '));
+  return tokens.every(t => hay.includes(t));
+}
+
+function _emptyChart(id, msg) {
+  const el = document.getElementById(id); if (!el) return;
+  Plotly.purge(el);
+  el.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#64748b;font-size:.82rem">' + (msg || 'Sin datos para los filtros aplicados') + '</div>';
+}
+
+function agruparPorCampo(rows, field) {
+  const m = new Map();
+  rows.forEach(r => {
+    const k = r[field]; if (!k) return;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(r);
+  });
+  return m;
+}
+
+function resumenGrupo(rows) {
+  const n = rows.length;
+  const suben = rows.filter(r => r._delta_pct > 0).length;
+  const bajan = rows.filter(r => r._delta_pct < 0).length;
+  const promedio = n ? rows.reduce((s, r) => s + r._delta_pct, 0) / n : 0;
+  return {n, suben, bajan, promedio_delta: Math.round(promedio * 10) / 10};
+}
+
+function ranking(rows, field, topN) {
+  const m = agruparPorCampo(rows, field);
+  const out = [...m.entries()].map(([nombre, g]) => ({nombre, ...resumenGrupo(g)}));
+  out.sort((a, b) => b.n - a.n);
+  return out.slice(0, topN);
+}
+
+const BUCKETS_DELTA = [
+  {min: -Infinity, max: -20,      label: '≤ -20%'},
+  {min: -19,       max: -10,      label: '-19% a -10%'},
+  {min: -9,        max: -1,       label: '-9% a -1%'},
+  {min: 0,         max: 0,        label: '0%'},
+  {min: 1,         max: 9,        label: '1% a 9%'},
+  {min: 10,        max: 19,       label: '10% a 19%'},
+  {min: 20,        max: 49,       label: '20% a 49%'},
+  {min: 50,        max: Infinity, label: '≥ 50%'},
+];
+
+function binDeltas(rows) {
+  const counts = BUCKETS_DELTA.map(b => rows.filter(r => r._delta_pct >= b.min && r._delta_pct <= b.max).length);
+  const colors = BUCKETS_DELTA.map(b => b.max < 0 ? '#1a9e6b' : b.min > 0 ? '#ae1e22' : '#94a3b8');
+  return {labels: BUCKETS_DELTA.map(b => b.label), counts, colors};
+}
+
+const CAMPOS_COCAMBIO = [
+  {flag: '_cambia_credito',  label: 'Creditos'},
+  {flag: '_cambia_periodo',  label: 'Duracion (periodos)'},
+  {flag: '_cambia_modalidad', label: 'Modalidad'},
+  {flag: '_cambia_municipio', label: 'Municipio'},
+];
+
+function calcularCoCambios(filtrados, costRows) {
+  return CAMPOS_COCAMBIO.map(({flag, label}) => {
+    const conCosto = costRows.filter(r => r[flag] !== null);
+    const tasaConCosto = conCosto.length
+      ? Math.round(1000 * conCosto.filter(r => r[flag] === true).length / conCosto.length) / 10
+      : 0;
+    const baseValidos = filtrados.filter(r => r[flag] !== null);
+    const tasaBase = baseValidos.length
+      ? Math.round(1000 * baseValidos.filter(r => r[flag] === true).length / baseValidos.length) / 10
+      : 0;
+    return {campo: label, n_con_dato: conCosto.length, tasa_con_cambio_credito: tasaConCosto, tasa_base: tasaBase};
+  });
+}
+
+function renderSector(porSector) {
+  if (!porSector.length) { _emptyChart('ch-sector'); return; }
+  const labels = porSector.map(s => s.nombre);
+  Plotly.react('ch-sector', [
+    {x: labels, y: porSector.map(s => s.suben), name: 'Suben', type: 'bar',
+     marker: {color: '#ae1e22', opacity: .85}},
+    {x: labels, y: porSector.map(s => s.bajan), name: 'Bajan', type: 'bar',
+     marker: {color: '#1a9e6b', opacity: .85}},
+  ], {
+    barmode: 'group', margin: {t:10,r:10,b:30,l:45},
+    yaxis: {showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.18}
+  }, PC);
+}
+
+function renderHist(costRows) {
+  const h = binDeltas(costRows);
+  if (!h.counts.some(c => c > 0)) { _emptyChart('ch-hist'); return; }
+  Plotly.react('ch-hist', [{
+    x: h.labels, y: h.counts, type: 'bar',
+    marker: {color: h.colors, opacity: .85},
+    hovertemplate: 'Rango: %{x}<br><b>%{y}</b> programas<extra></extra>'
+  }], {
+    margin: {t:10,r:10,b:45,l:45},
+    xaxis: {title: 'Cambio en costo de matricula (%)', tickfont: {size: 11}},
+    yaxis: {title: 'N. programas', showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', bargap: .15
+  }, PC);
+}
+
+function renderRanking(id, data) {
+  if (!data.length) { _emptyChart(id); return; }
+  const d = [...data].slice(0, 12).reverse();
+  const trunc = s => s.length > 36 ? s.slice(0, 36) + '...' : s;
+  const maxN = Math.max(...d.map(r => r.n));
+  Plotly.react(id, [{
+    y: d.map(r => trunc(r.nombre)), x: d.map(r => r.n), customdata: d.map(r => r.nombre),
+    type: 'bar', orientation: 'h',
+    marker: {color: d.map(r => r.promedio_delta >= 0 ? '#ae1e22' : '#1a9e6b'), opacity: .85},
+    text: d.map(r => `${r.promedio_delta > 0 ? '+' : ''}${r.promedio_delta}%`),
+    textposition: 'outside', cliponaxis: false,
+    textfont: {size: 10, color: d.map(r => r.promedio_delta >= 0 ? '#7a1518' : '#0f6e49')},
+    hovertemplate: '%{customdata}<br><b>%{x}</b> cambios<extra></extra>'
+  }], {
+    margin: {t:10,r:60,b:30,l:230},
+    xaxis: {showgrid: true, gridcolor: '#e2e8f0', range: [0, maxN * 1.35]},
+    yaxis: {tickfont: {size: 10}},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', bargap: .3
+  }, PC);
+}
+
+function renderCineDelta(costRows) {
+  const CINE_COL = 'CINE_F_2013_AC_CAMPO_ESPECÍFIC';
+  const m = agruparPorCampo(costRows, CINE_COL);
+  const data = [...m.entries()].map(([campo, rows]) => {
+    const n = rows.length;
+    const suben = rows.filter(r => r._delta_pct > 0).length;
+    const bajan = rows.filter(r => r._delta_pct < 0).length;
+    const promedio = n ? rows.reduce((s, r) => s + r._delta_pct, 0) / n : 0;
+    return {campo, n, suben, bajan, promedio: Math.round(promedio * 10) / 10};
+  });
+  data.sort((a, b) => Math.abs(b.promedio) - Math.abs(a.promedio));
+  const top = data.slice(0, 20).reverse();
+  if (!top.length) { _emptyChart('ch-cine-delta'); return; }
+  const trunc = s => s.length > 42 ? s.slice(0, 42) + '...' : s;
+  Plotly.react('ch-cine-delta', [{
+    y: top.map(d => trunc(d.campo)), x: top.map(d => d.promedio), customdata: top,
+    type: 'bar', orientation: 'h',
+    marker: {color: top.map(d => d.promedio >= 0 ? '#ae1e22' : '#1a9e6b'), opacity: .85},
+    text: top.map(d => (d.promedio > 0 ? '+' : '') + d.promedio + '%'),
+    textposition: 'outside', cliponaxis: false, textfont: {size: 10},
+    hovertemplate: '%{y}<br>Cambio promedio: <b>%{x}%</b>' +
+      '<br>%{customdata.suben} suben / %{customdata.bajan} bajan (%{customdata.n} programas)<extra></extra>'
+  }], {
+    margin: {t:10,r:50,b:40,l:270},
+    xaxis: {title: 'Cambio promedio en costo de matricula (%)', zeroline: true, zerolinecolor: '#94a3b8',
+      showgrid: true, gridcolor: '#e2e8f0'},
+    yaxis: {tickfont: {size: 10}},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', bargap: .3
+  }, PC);
+}
+
+function renderCoCambios(coCambios) {
+  if (!coCambios.length) { _emptyChart('ch-cocambios'); return; }
+  const labels = coCambios.map(c => c.campo);
+  Plotly.react('ch-cocambios', [
+    {x: labels, y: coCambios.map(c => c.tasa_con_cambio_credito), name: 'Cuando cambia el costo',
+     type: 'bar', marker: {color: '#bd900b', opacity: .9},
+     text: coCambios.map(c => c.tasa_con_cambio_credito + '%'), textposition: 'outside', cliponaxis: false},
+    {x: labels, y: coCambios.map(c => c.tasa_base), name: 'Tasa general (control)',
+     type: 'bar', marker: {color: '#94a3b8', opacity: .9},
+     text: coCambios.map(c => c.tasa_base + '%'), textposition: 'outside', cliponaxis: false},
+  ], {
+    barmode: 'group', margin: {t:30,r:10,b:50,l:50},
+    yaxis: {title: '% de los casos', showgrid: true, gridcolor: '#e2e8f0', range: [0, 100]},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.25}
+  }, PC);
+}
+
+function renderScatter(costRows) {
+  if (!costRows.length) { _emptyChart('ch-scatter'); return; }
+  const porSector = {};
+  costRows.forEach(p => { (porSector[p.SECTOR] = porSector[p.SECTOR] || []).push(p); });
+  const colores = {Oficial: '#2d5b9e', Privado: '#bd900b'};
+  const vals = costRows.flatMap(p => [p._costo_antes, p._costo_despues]);
+  const mn = Math.min(...vals), mx = Math.max(...vals);
+  const traces = Object.entries(porSector).map(([sector, pts]) => ({
+    x: pts.map(p => p._costo_antes), y: pts.map(p => p._costo_despues),
+    text: pts.map(p => p['NOMBRE_INSTITUCIÓN'] + ' - ' + p['NOMBRE_DEL_PROGRAMA']),
+    mode: 'markers', type: 'scatter', name: sector,
+    marker: {color: colores[sector] || '#64748b', size: 7, opacity: .65},
+    hovertemplate: '<b>%{text}</b><br>Antes: $%{x:,.0f}<br>Despues: $%{y:,.0f}<extra></extra>'
+  }));
+  traces.push({x: [mn, mx], y: [mn, mx], mode: 'lines', line: {color: '#9fb0c9', width: 1, dash: 'dot'},
+    hoverinfo: 'skip', showlegend: false});
+  Plotly.react('ch-scatter', traces, {
+    margin: {t:10,r:20,b:50,l:70},
+    xaxis: {title: 'Costo antes (COP)', type: 'log', showgrid: true, gridcolor: '#e2e8f0'},
+    yaxis: {title: 'Costo despues (COP)', type: 'log', showgrid: true, gridcolor: '#e2e8f0'},
+    plot_bgcolor: 'white', paper_bgcolor: 'white',
+    legend: {orientation: 'h', y: -0.2}
+  }, PC);
+}
+
+const COL_HEAD = {
+  FECHA_OBTENCION: 'Fecha', 'CODIGO_SNIES_DEL_PROGRAMA': 'Cod. SNIES', NOMBRE_DEL_PROGRAMA: 'Programa',
+  'NOMBRE_INSTITUCIÓN': 'Institucion', SECTOR: 'Sector', DEPARTAMENTO_OFERTA_PROGRAMA: 'Departamento',
+  'DIVISION UNINORTE': 'Division', _costo_antes: 'Costo antes', _costo_despues: 'Costo despues',
+  _delta_pct: 'Delta %', QUE_CAMBIO: 'Que mas cambio?'
+};
+const TBL_COLS = ['FECHA_OBTENCION', 'NOMBRE_DEL_PROGRAMA', 'NOMBRE_INSTITUCIÓN', 'SECTOR',
+  'DEPARTAMENTO_OFERTA_PROGRAMA', '_costo_antes', '_costo_despues', '_delta_pct', 'QUE_CAMBIO'];
+let sortDir = {};
+let tablaRows = [];
+
+function buildTbl(rows) {
+  const cols = TBL_COLS.filter(c => !rows.length || c in rows[0]);
+  let h = '<table><thead><tr>';
+  cols.forEach(c => { h += '<th onclick="sortTbl(\'' + c + '\')">' + (COL_HEAD[c] || c) + ' <span style="opacity:.4">↕</span></th>'; });
+  h += '</tr></thead><tbody>';
+  if (!rows.length) {
+    h += '<tr><td colspan="' + cols.length + '" class="empty">Sin registros para los filtros seleccionados</td></tr>';
+  } else {
+    rows.forEach(r => {
+      h += '<tr>' + cols.map(c => {
+        if (c === '_delta_pct') {
+          const v = r[c];
+          const cls = v > 0 ? 'delta-up' : (v < 0 ? 'delta-down' : '');
+          return '<td class="' + cls + '">' + (v > 0 ? '+' : '') + v + '%</td>';
+        }
+        if (c === '_costo_antes' || c === '_costo_despues') {
+          return '<td>$' + fmt(r[c]) + '</td>';
+        }
+        return '<td>' + (r[c] ?? '') + '</td>';
+      }).join('') + '</tr>';
+    });
+  }
+  return h + '</tbody></table>';
+}
+
+function renderTbl(rows) { tablaRows = rows; document.getElementById('tbl-wrap').innerHTML = buildTbl(rows); }
+
+function sortTbl(col) {
+  sortDir[col] = !sortDir[col];
+  tablaRows = [...tablaRows].sort((a, b) => {
+    const va = a[col] ?? '', vb = b[col] ?? '';
+    const na = parseFloat(va), nb = parseFloat(vb);
+    const cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : String(va).localeCompare(String(vb), 'es');
+    return sortDir[col] ? cmp : -cmp;
+  });
+  document.getElementById('tbl-wrap').innerHTML = buildTbl(tablaRows);
+}
+
+function uniq(arr) { return [...new Set(arr.filter(v => v && String(v).trim() !== ''))].sort(); }
+function addOpts(id, vals) {
+  const el = document.getElementById(id); if (!el) return;
+  vals.forEach(v => { const o = document.createElement('option'); o.value = o.textContent = v; el.appendChild(o); });
+}
+function initAutocomplete(inputId, menuId, options, onChange) {
+  const inp = document.getElementById(inputId), menu = document.getElementById(menuId);
+  if (!inp || !menu) return;
+  function render() {
+    const q = _norm(inp.value).trim();
+    const matches = (q ? options.filter(o => _norm(o).includes(q)) : options).slice(0, 50);
+    menu.innerHTML = matches.length
+      ? matches.map(o => '<div class="ac-item">' + o.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</div>').join('')
+      : '<div class="ac-empty">Sin coincidencias</div>';
+    menu.classList.add('show');
+  }
+  inp.addEventListener('focus', render);
+  inp.addEventListener('input', () => { render(); onChange(); });
+  menu.addEventListener('mousedown', e => {
+    const it = e.target.closest('.ac-item'); if (!it) return;
+    e.preventDefault();
+    inp.value = it.textContent;
+    menu.classList.remove('show');
+    onChange();
+  });
+  document.addEventListener('click', e => {
+    if (e.target !== inp && !menu.contains(e.target)) menu.classList.remove('show');
+  });
+}
+addOpts('f-sector', uniq(D.universo.map(r => r['SECTOR'])));
+addOpts('f-depto',  uniq(D.universo.map(r => r['DEPARTAMENTO_OFERTA_PROGRAMA'])));
+initAutocomplete('f-institucion', 'f-institucion-menu', uniq(D.universo.map(r => r['NOMBRE_INSTITUCIÓN'])), applyFilters);
+
+function gv(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+const truncKpi = s => s.length > 55 ? s.slice(0, 55) + '…' : s;
+
+function applyFilters() {
+  const qTokens = _norm(gv('f-q')).split(/\s+/).filter(Boolean);
+  const se = gv('f-sector'), de = gv('f-depto');
+  const insTokens = _norm(gv('f-institucion')).split(/\s+/).filter(Boolean);
+
+  const filtrados = D.universo.filter(r => {
+    if (!_rowMatches(r, qTokens)) return false;
+    if (se && r['SECTOR'] !== se) return false;
+    if (de && r['DEPARTAMENTO_OFERTA_PROGRAMA'] !== de) return false;
+    if (insTokens.length) {
+      const hayIns = _norm(r['NOMBRE_INSTITUCIÓN']);
+      if (!insTokens.every(t => hayIns.includes(t))) return false;
+    }
+    return true;
+  });
+  const costRows = filtrados.filter(r => r._cambia_costo);
+
+  document.getElementById('f-count').textContent = fmt(costRows.length) + ' cambios de costo (' + fmt(filtrados.length) + ' programas modificados en total)';
+  document.getElementById('k-total').textContent = fmt(costRows.length);
+
+  const porSectorAgg = ranking(costRows, 'SECTOR', 10).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const sOficial = porSectorAgg.find(s => s.nombre === 'Oficial');
+  const sPrivado = porSectorAgg.find(s => s.nombre === 'Privado');
+  document.getElementById('k-oficial').textContent = sOficial ? (sOficial.promedio_delta > 0 ? '+' : '') + sOficial.promedio_delta + '%' : '-';
+  document.getElementById('k-oficial-sub').textContent = sOficial ? `${sOficial.suben} suben / ${sOficial.bajan} bajan` : 'sin datos';
+  document.getElementById('k-privado').textContent = sPrivado ? (sPrivado.promedio_delta > 0 ? '+' : '') + sPrivado.promedio_delta + '%' : '-';
+  document.getElementById('k-privado-sub').textContent = sPrivado ? `${sPrivado.suben} suben / ${sPrivado.bajan} bajan` : 'sin datos';
+
+  const maxRow = costRows.reduce((best, r) => (!best || r._delta_pct > best._delta_pct) ? r : best, null);
+  document.getElementById('k-max').textContent = maxRow ? (maxRow._delta_pct > 0 ? '+' : '') + maxRow._delta_pct + '%' : '-';
+  document.getElementById('k-max-sub').textContent = maxRow ? truncKpi(maxRow['NOMBRE_INSTITUCIÓN'] + ' — ' + maxRow['NOMBRE_DEL_PROGRAMA']) : 'sin datos';
+
+  const coCambios = calcularCoCambios(filtrados, costRows);
+
+  renderSector(porSectorAgg);
+  renderHist(costRows);
+  renderRanking('ch-instituciones', ranking(costRows, 'NOMBRE_INSTITUCIÓN', 20));
+  renderRanking('ch-departamentos', ranking(costRows, 'DEPARTAMENTO_OFERTA_PROGRAMA', 20));
+  renderCineDelta(costRows);
+  renderCoCambios(coCambios);
+  renderScatter(costRows);
+  renderTbl(costRows);
 }
 
 function resetFilters() {
