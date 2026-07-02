@@ -560,8 +560,12 @@ def _datos_mapa(df: pd.DataFrame) -> list:
 
 # ── data loading ──────────────────────────────────────────────────────────────
 
+_TOP_MODALIDADES = 6
+
+
 def leer_historico():
     puntos = []
+    conteos_modalidad = {}  # fecha -> {modalidad: count}
     for f in PROGRAMAS_DIR.glob("Programas *.xlsx"):
         m = _PROG_RE.match(f.name)
         if not m:
@@ -572,16 +576,42 @@ def leer_historico():
             continue
         try:
             df = _read_xl(f, sheet_name="Programas",
-                          usecols=["CÓDIGO_SNIES_DEL_PROGRAMA"])
+                          usecols=["CÓDIGO_SNIES_DEL_PROGRAMA", "MODALIDAD"])
             if len(df) > 2:
                 df = df.iloc[:-2]
             df = df.dropna(subset=["CÓDIGO_SNIES_DEL_PROGRAMA"])
             puntos.append({"fecha": fecha.isoformat(), "total": len(df)})
+            modalidad = df["MODALIDAD"].fillna("Sin definir").astype(str).str.strip()
+            modalidad = modalidad.replace("", "Sin definir")
+            conteos_modalidad[fecha.isoformat()] = modalidad.value_counts().to_dict()
         except Exception as e:
             print(f"  saltando {f.name}: {e}")
     puntos.sort(key=lambda x: x["fecha"])
     print(f"  historico: {len(puntos)} snapshots")
-    return puntos
+
+    fechas = [p["fecha"] for p in puntos]
+    totales = {}
+    for conteo in conteos_modalidad.values():
+        for modalidad, n in conteo.items():
+            totales[modalidad] = totales.get(modalidad, 0) + n
+    top = [m for m, _ in sorted(totales.items(), key=lambda kv: kv[1], reverse=True)[:_TOP_MODALIDADES]]
+    hay_otras = len(totales) > len(top)
+
+    series = []
+    for modalidad in top:
+        series.append({
+            "name": modalidad,
+            "values": [conteos_modalidad.get(fecha, {}).get(modalidad, 0) for fecha in fechas],
+        })
+    if hay_otras:
+        resto = set(totales) - set(top)
+        series.append({
+            "name": "Otras",
+            "values": [sum(conteos_modalidad.get(fecha, {}).get(m, 0) for m in resto) for fecha in fechas],
+        })
+    historico_modalidad = {"labels": fechas, "series": series}
+
+    return puntos, historico_modalidad
 
 
 def leer_novedades(nombre):
@@ -620,7 +650,7 @@ def leer_snapshot_actual(historico):
 def main():
     print("Generando dashboard SNIES...")
 
-    historico    = leer_historico()
+    historico, historico_modalidad = leer_historico()
     nuevos_df    = _normalizar_depto(_normalizar_fecha_obtencion(leer_novedades("Nuevos_pregrado.xlsx")))
     inactivos_df = _normalizar_depto(_normalizar_fecha_obtencion(leer_novedades("Inactivos_pregrado.xlsx")))
     mods_df      = leer_novedades("Modificados_pregrado.xlsx")
@@ -669,6 +699,7 @@ def main():
     data = {
         "ultima_actualizacion": historico[-1]["fecha"] if historico else "N/A",
         "historico":     historico,
+        "historico_modalidad": historico_modalidad,
         "kpis":          kpis,
         "por_sector":     _distribucion(snapshot_df, "SECTOR"),
         "por_depto":      _distribucion(snapshot_df, "DEPARTAMENTO_OFERTA_PROGRAMA"),
@@ -885,6 +916,11 @@ tr:hover td{background:#f8fafc}
       <div id="ch-flujo" style="height:260px"></div>
       <div id="flujo-note" style="font-size:.7rem;color:#64748b;margin-top:.6rem;line-height:1.4"></div>
     </div>
+  </section>
+
+  <section class="card">
+    <div class="card-title">Evolución de la modalidad de los programas activos</div>
+    <div id="ch-modalidad-evol" style="height:320px"></div>
   </section>
 
   <section class="chart-2col">
@@ -1185,6 +1221,28 @@ document.getElementById('k-mod-sub').textContent = 'acumulado: ' + fmt(D.kpis.mo
     xaxis: {showgrid: false, tickfont: {size: 10}},
     yaxis: {showgrid: true, gridcolor: '#e2e8f0', tickfont: {size: 11}},
     plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified'
+  }, {responsive: true, displayModeBar: false});
+})();
+
+(function() {
+  const dm = D.historico_modalidad || {labels: [], series: []};
+  const el = document.getElementById('ch-modalidad-evol');
+  if (!dm.labels.length || !dm.series.length) { _emptyChart(el); return; }
+  const MCOLORS = ['#2d5b9e','#fcc10e','#bd900b','#ae1e22','#6e91b9',
+                   '#214174','#d56f18','#948e56','#15284b','#7a1518'];
+  const traces = dm.series.map((s, i) => ({
+    x: dm.labels, y: s.values, name: s.name,
+    type: 'scatter', mode: 'lines+markers',
+    line: {color: MCOLORS[i % MCOLORS.length], width: 2.5},
+    marker: {color: MCOLORS[i % MCOLORS.length], size: 5},
+    hovertemplate: s.name + '<br>%{x}<br><b>%{y:,}</b> programas<extra></extra>'
+  }));
+  Plotly.newPlot('ch-modalidad-evol', traces, {
+    margin: {t:10, r:20, b:40, l:55},
+    xaxis: {showgrid: false, tickfont: {size: 10}},
+    yaxis: {showgrid: true, gridcolor: '#e2e8f0', tickfont: {size: 11}},
+    plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
+    legend: {orientation: 'h', y: -0.22, font: {size: 10}}
   }, {responsive: true, displayModeBar: false});
 })();
 
