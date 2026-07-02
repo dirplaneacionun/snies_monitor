@@ -920,7 +920,9 @@ tr:hover td{background:#f8fafc}
 
   <section class="card">
     <div class="card-title">Evolución de la modalidad de los programas activos</div>
-    <div id="ch-modalidad-evol" style="height:320px"></div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:.85rem">
+      Cada panel tiene su propia escala — ordenados de mayor a menor crecimiento relativo desde el primer registro</div>
+    <div id="modalidad-evol-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.75rem"></div>
   </section>
 
   <section class="chart-2col">
@@ -1226,24 +1228,56 @@ document.getElementById('k-mod-sub').textContent = 'acumulado: ' + fmt(D.kpis.mo
 
 (function() {
   const dm = D.historico_modalidad || {labels: [], series: []};
-  const el = document.getElementById('ch-modalidad-evol');
-  if (!dm.labels.length || !dm.series.length) { _emptyChart(el); return; }
-  const MCOLORS = ['#2d5b9e','#fcc10e','#bd900b','#ae1e22','#6e91b9',
-                   '#214174','#d56f18','#948e56','#15284b','#7a1518'];
-  const traces = dm.series.map((s, i) => ({
-    x: dm.labels, y: s.values, name: s.name,
-    type: 'scatter', mode: 'lines+markers',
-    line: {color: MCOLORS[i % MCOLORS.length], width: 2.5},
-    marker: {color: MCOLORS[i % MCOLORS.length], size: 5},
-    hovertemplate: s.name + '<br>%{x}<br><b>%{y:,}</b> programas<extra></extra>'
-  }));
-  Plotly.newPlot('ch-modalidad-evol', traces, {
-    margin: {t:10, r:20, b:40, l:55},
-    xaxis: {showgrid: false, tickfont: {size: 10}},
-    yaxis: {showgrid: true, gridcolor: '#e2e8f0', tickfont: {size: 11}},
-    plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified',
-    legend: {orientation: 'h', y: -0.22, font: {size: 10}}
-  }, {responsive: true, displayModeBar: false});
+  const grid = document.getElementById('modalidad-evol-grid');
+  if (!grid) return;
+  if (!dm.labels.length || !dm.series.length) {
+    grid.innerHTML = '<div class="empty">Sin datos</div>';
+    return;
+  }
+
+  // Cada modalidad tiene una escala absoluta muy distinta (Presencial: miles,
+  // Dual: unidades) — superponerlas en un solo eje aplasta a las pequeñas.
+  // Un panel por modalidad, cada uno con su propio eje, muestra la forma real
+  // de cada tendencia; ordenarlos por % de crecimiento responde directamente
+  // "qué modalidad ha crecido mas" sin necesitar leer los ejes.
+  const withGrowth = dm.series.map(s => {
+    const firstIdx = s.values.findIndex(v => v > 0);
+    const first = firstIdx === -1 ? null : s.values[firstIdx];
+    const last = s.values[s.values.length - 1];
+    const pct = (first !== null && first > 0) ? ((last - first) / first * 100) : null;
+    return {name: s.name, values: s.values, last, pct};
+  });
+  withGrowth.sort((a, b) => (b.pct ?? -Infinity) - (a.pct ?? -Infinity));
+
+  grid.innerHTML = withGrowth.map((s, i) => {
+    const badge = s.pct === null ? '' :
+      '<span style="font-size:.72rem;color:var(--muted)">' +
+      (s.pct >= 0 ? '▲ +' : '▼ ') + Math.abs(s.pct).toFixed(0) + '%</span>';
+    return (
+      '<div class="card" style="padding:.85rem .95rem;box-shadow:none;border:1px solid var(--border)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:.5rem;margin-bottom:.15rem">' +
+          '<div style="font-size:.74rem;font-weight:600;color:#15284b;line-height:1.2">' + s.name + '</div>' +
+          badge +
+        '</div>' +
+        '<div style="font-size:1.25rem;font-weight:700">' + s.last.toLocaleString('es-CO') + '</div>' +
+        '<div id="mod-mini-' + i + '" style="height:100px;margin-top:.3rem"></div>' +
+      '</div>'
+    );
+  }).join('');
+
+  withGrowth.forEach((s, i) => {
+    Plotly.newPlot('mod-mini-' + i, [{
+      x: dm.labels, y: s.values, type: 'scatter', mode: 'lines',
+      line: {color: '#2d5b9e', width: 2, shape: 'spline'},
+      fill: 'tozeroy', fillcolor: 'rgba(45,91,158,0.08)',
+      hovertemplate: '%{x}<br><b>%{y:,}</b> programas<extra></extra>'
+    }], {
+      margin: {t:4, r:4, b:16, l:28},
+      xaxis: {showgrid: false, tickfont: {size: 8}, nticks: 3},
+      yaxis: {showgrid: true, gridcolor: '#f1f5f9', tickfont: {size: 8}, rangemode: 'tozero'},
+      plot_bgcolor: 'white', paper_bgcolor: 'white', hovermode: 'x unified'
+    }, {responsive: true, displayModeBar: false});
+  });
 })();
 
 (function() {
