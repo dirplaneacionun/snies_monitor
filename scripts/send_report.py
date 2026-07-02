@@ -30,7 +30,7 @@ NOVEDADES_DIR = ROOT / "data" / "novedades"
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 
-DASHBOARD_URL = "https://hasuarez32.github.io/snies-monitor/"
+DASHBOARD_URL = "https://dirplaneacionun.github.io/snies_monitor/"
 
 # ── HTML helpers ──────────────────────────────────────────────────────────────
 

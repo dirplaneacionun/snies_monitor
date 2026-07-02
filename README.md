@@ -1,6 +1,6 @@
 # SNIES Monitor · Uninorte
 
-[![Ver Dashboard](https://img.shields.io/badge/📊_Ver_Dashboard-GitHub_Pages-blue?style=for-the-badge)](https://hasuarez32.github.io/snies-monitor/)
+[![Ver Dashboard](https://img.shields.io/badge/📊_Ver_Dashboard-GitHub_Pages-blue?style=for-the-badge)](https://dirplaneacionun.github.io/snies_monitor/)
 
 Monitor automático de cambios en programas universitarios de pregrado registrados en el [SNIES](https://hecaa.mineducacion.gov.co/consultaspublicas/programas) para la Universidad del Norte (Uninorte).
 
@@ -17,7 +17,7 @@ Corre cada día hábil a las 8:00 a.m. (hora Colombia) vía GitHub Actions:
 ## Dashboard
 
 El dashboard se publica automáticamente en:  
-**<https://hasuarez32.github.io/snies-monitor/>**
+**<https://dirplaneacionun.github.io/snies_monitor/>**
 
 Incluye:
 - Evolución histórica del número de programas
