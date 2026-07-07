@@ -46,7 +46,7 @@ def _tabla_html(df: pd.DataFrame | None, color_header: str, show_all: bool = Fal
     candidatas = [
         "NOMBRE_DEL_PROGRAMA",
         "NOMBRE_INSTITUCIÓN",
-        "MUNICIPIO_OFERTA_PROGRAMA",
+        "DEPARTAMENTO_OFERTA_PROGRAMA",
         "DIVISIÓN UNINORTE",
         "QUE_CAMBIO",
     ]

@@ -2,7 +2,9 @@ name: SNIES Monitor
 
 on:
   schedule:
-    - cron: '0 13 * * 2'   # 08:00 hora Colombia (UTC-5), martes
+    - cron: '7 13 * * 2'   # 08:07 hora Colombia (UTC-5), martes — minuto "raro" a propósito:
+                            # GitHub retrasa/salta con más frecuencia los cron en punto (:00),
+                            # por la congestión de miles de workflows disparando a la vez.
   workflow_dispatch:
 
 jobs:
