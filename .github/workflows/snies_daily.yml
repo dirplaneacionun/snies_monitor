@@ -2,58 +2,117 @@ name: SNIES Monitor
 
 on:
   schedule:
-    - cron: '7 13 * * 2'   # 08:07 hora Colombia (UTC-5), martes — minuto "raro" a propósito:
-                            # GitHub retrasa/salta con más frecuencia los cron en punto (:00),
-                            # por la congestión de miles de workflows disparando a la vez.
+    # Martes 06:37 AM hora de Colombia (UTC-5 = 11:37 UTC)
+    # Se utiliza un minuto poco común para reducir la probabilidad
+    # de retrasos por congestión del scheduler de GitHub.
+    - cron: '37 11 * * 2'
+
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   run-snies:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
+    defaults:
+      run:
+        shell: bash
+
     steps:
-      - name: Checkout
+      - name: Checkout del repositorio
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Instalar Chrome
+      - name: Información de ejecución
         run: |
-          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -q
+          set -euo pipefail
+
+          echo "========================================"
+          echo "Runner:"
+          hostname
+
+          echo
+          echo "Sistema:"
+          uname -a
+
+          echo
+          echo "Hora UTC:"
+          date -u
+
+          echo
+          echo "Hora Colombia:"
+          TZ=America/Bogota date
+          echo "========================================"
+
+      - name: Instalar Google Chrome
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+
+          sudo apt-get install -y wget gnupg
+
+          sudo mkdir -p /usr/share/keyrings
+
+          wget -qO- https://dl.google.com/linux/linux_signing_key.pub \
+            | sudo gpg --dearmor \
+            -o /usr/share/keyrings/google-chrome.gpg
+
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+            | sudo tee /etc/apt/sources.list.d/google-chrome.list
+
+          sudo apt-get update
+
           sudo apt-get install -y google-chrome-stable
 
-      - name: Setup Python
+      - name: Configurar Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: pip
 
       - name: Instalar dependencias
-        run: pip install -r requirements.txt
-
-      - name: Ejecutar pipeline
-        env:
-          SMTP_USER:     ${{ secrets.SMTP_USER }}
-          SMTP_PASS:     ${{ secrets.SMTP_PASS }}
-          DESTINATARIOS: ${{ secrets.DESTINATARIOS }}
-        run: python scripts/run_snies.py
-
-      - name: Commitear cambios
         run: |
-          git config user.name  "snies-bot"
-          git config user.email "snies-bot@uninorte.edu.co"
-          git add data/ Programas/
-          git diff --staged --quiet || git commit -m "snies: $(date +'%Y-%m-%d')"
-          git push
+          set -euo pipefail
+
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Ejecutar pipeline SNIES
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          DESTINATARIOS: ${{ secrets.DESTINATARIOS }}
+        run: |
+          set -euo pipefail
+
+          python scripts/run_snies.py
 
       - name: Generar dashboard
-        run: python docs/generar_dashboard.py
-
-      - name: Publicar dashboard
         run: |
-          git add docs/
-          git diff --staged --quiet || git commit -m "dashboard: $(date +'%Y-%m-%d')"
-          git push
+          set -euo pipefail
+
+          python docs/generar_dashboard.py
+
+      - name: Publicar cambios
+        run: |
+          set -euo pipefail
+
+          git config user.name "snies-bot"
+          git config user.email "snies-bot@uninorte.edu.co"
+
+          git add -A data Programas docs
+
+          if git diff --cached --quiet; then
+            echo "No hay cambios para publicar."
+            exit 0
+          fi
+
+          git commit -m "Actualización SNIES y dashboard: $(date +'%Y-%m-%d')"
+
+          # Cambia "main" si tu rama principal tiene otro nombre.
+          git push origin HEAD:main
