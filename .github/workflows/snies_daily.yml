@@ -1,12 +1,6 @@
 name: SNIES Monitor
 
 on:
-  schedule:
-    # Martes 06:37 AM hora de Colombia (UTC-5 = 11:37 UTC)
-    # Se utiliza un minuto poco común para reducir la probabilidad
-    # de retrasos por congestión del scheduler de GitHub.
-    - cron: '37 11 * * 2'
-
   workflow_dispatch:
 
 permissions:
