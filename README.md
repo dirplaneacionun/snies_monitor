@@ -32,7 +32,6 @@ Incluye:
 snies-monitor/
 ├── scripts/
 │   ├── run_snies.py            # Pipeline pregrado
-│   └── run_snies_posgrado.py   # Pipeline posgrado
 ├── docs/
 │   ├── generar_dashboard.py    # Genera index.html
 │   └── index.html              # Dashboard (auto-generado)
