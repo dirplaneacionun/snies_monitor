@@ -6,7 +6,7 @@ Monitor automático de cambios en programas universitarios de pregrado registrad
 
 ## ¿Qué hace?
 
-Corre cada día hábil a las 8:00 a.m. (hora Colombia) vía GitHub Actions:
+Corre cada martes a las 8:00 a.m. (hora Colombia) mediante una llamada HTTP a la API de GitHub mediante cron-job:
 
 1. Descarga el snapshot actual de programas universitarios activos desde el portal SNIES.
 2. Compara con el snapshot anterior para detectar **nuevos**, **inactivos** y **modificados**.
@@ -41,7 +41,7 @@ snies-monitor/
 │   └── Categorización divisiones SNIES.xlsx
 ├── Programas/                  # Snapshots históricos DD-MM-YY.xlsx
 └── .github/workflows/
-    └── snies_daily.yml         # Workflow diario
+    └── snies_daily.yml        
 ```
 
 ## Ejecución local
