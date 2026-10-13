@@ -50,3 +50,4 @@ pip install -r requirements.txt
 python scripts/run_snies.py          # descarga + compara + envía correo
 python docs/generar_dashboard.py     # regenera el dashboard con datos locales
 ```
+.
