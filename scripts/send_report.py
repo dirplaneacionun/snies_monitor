@@ -42,10 +42,14 @@ def _tabla_html(df: pd.DataFrame | None, color_header: str, show_all: bool = Fal
             "Sin novedades esta semana.</p>"
         )
 
-    # Columnas preferidas para la vista previa del correo
+    # Columnas preferidas para la vista previa del correo.
+    # MODALIDAD aplica a las tres tablas (nuevos, inactivos y modificados). En
+    # modificados, run_snies.detectar_novedades deja en "MODALIDAD" el valor
+    # actual (última modalidad registrada) y el previo en "MODALIDAD_ANTERIOR".
     candidatas = [
         "NOMBRE_DEL_PROGRAMA",
         "NOMBRE_INSTITUCIÓN",
+        "MODALIDAD",
         "DEPARTAMENTO_OFERTA_PROGRAMA",
         "DIVISIÓN UNINORTE",
         "QUE_CAMBIO",
